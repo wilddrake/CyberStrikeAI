@@ -227,6 +227,19 @@ func (db *DB) initTables() error {
 		FOREIGN KEY (queue_id) REFERENCES batch_task_queues(id) ON DELETE CASCADE
 	);`
 
+	// 创建 WebShell 连接表
+	createWebshellConnectionsTable := `
+	CREATE TABLE IF NOT EXISTS webshell_connections (
+		id TEXT PRIMARY KEY,
+		url TEXT NOT NULL,
+		password TEXT NOT NULL DEFAULT '',
+		type TEXT NOT NULL DEFAULT 'php',
+		method TEXT NOT NULL DEFAULT 'post',
+		cmd_param TEXT NOT NULL DEFAULT '',
+		remark TEXT NOT NULL DEFAULT '',
+		created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+	);`
+
 	// 创建索引
 	createIndexes := `
 	CREATE INDEX IF NOT EXISTS idx_messages_conversation_id ON messages(conversation_id);
@@ -253,6 +266,7 @@ func (db *DB) initTables() error {
 	CREATE INDEX IF NOT EXISTS idx_batch_tasks_queue_id ON batch_tasks(queue_id);
 	CREATE INDEX IF NOT EXISTS idx_batch_task_queues_created_at ON batch_task_queues(created_at);
 	CREATE INDEX IF NOT EXISTS idx_batch_task_queues_title ON batch_task_queues(title);
+	CREATE INDEX IF NOT EXISTS idx_webshell_connections_created_at ON webshell_connections(created_at);
 	`
 
 	if _, err := db.Exec(createConversationsTable); err != nil {
@@ -309,6 +323,10 @@ func (db *DB) initTables() error {
 
 	if _, err := db.Exec(createBatchTasksTable); err != nil {
 		return fmt.Errorf("创建batch_tasks表失败: %w", err)
+	}
+
+	if _, err := db.Exec(createWebshellConnectionsTable); err != nil {
+		return fmt.Errorf("创建webshell_connections表失败: %w", err)
 	}
 
 	// 为已有表添加新字段（如果不存在）- 必须在创建索引之前

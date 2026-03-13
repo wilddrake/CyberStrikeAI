@@ -8495,6 +8495,528 @@ header {
     color: var(--text-primary);
 }
 
+/* WebShell 管理页面样式 - 美化版 */
+.webshell-page-content {
+    height: calc(100vh - 140px);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    background: linear-gradient(165deg, #f0f4f8 0%, #e8eef5 50%, #f5f7fa 100%);
+}
+
+.webshell-layout {
+    display: flex;
+    flex: 1;
+    min-height: 0;
+    gap: 0;
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    overflow: hidden;
+    background: var(--bg-primary);
+    box-shadow: var(--shadow-md);
+}
+
+.webshell-sidebar {
+    width: 360px;
+    min-width: 260px;
+    max-width: 50%;
+    flex-shrink: 0;
+    border-right: 1px solid var(--border-color);
+    display: flex;
+    flex-direction: column;
+    background: linear-gradient(180deg, #fafbfd 0%, #f5f7fa 100%);
+}
+
+/* 可拖拽调整连接列表宽度 */
+.webshell-resize-handle {
+    position: relative;
+    width: 6px;
+    min-width: 6px;
+    flex-shrink: 0;
+    cursor: col-resize;
+    background: var(--border-color);
+    transition: background 0.15s ease;
+    user-select: none;
+}
+.webshell-resize-handle:hover,
+.webshell-resize-handle.active {
+    background: var(--accent-color);
+}
+.webshell-resize-handle::after {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 12px;
+    margin-left: -3px;
+}
+
+.webshell-sidebar-header {
+    padding: 14px 18px;
+    font-weight: 600;
+    color: var(--text-primary);
+    border-bottom: 1px solid var(--border-color);
+    font-size: 0.95rem;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    background: rgba(255, 255, 255, 0.6);
+    flex-shrink: 0;
+}
+
+.webshell-sidebar-header::before {
+    content: '';
+    display: inline-block;
+    width: 20px;
+    height: 20px;
+    background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%230066ff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71'/%3E%3Cpath d='M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71'/%3E%3C/svg%3E") center/contain no-repeat;
+}
+
+.webshell-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    min-height: 0;
+}
+
+.webshell-empty {
+    padding: 32px 20px;
+    text-align: center;
+    color: var(--text-muted);
+    font-size: 0.9rem;
+    line-height: 1.5;
+    background: rgba(255, 255, 255, 0.5);
+    border-radius: 10px;
+    border: 1px dashed var(--border-color);
+}
+
+.webshell-item {
+    padding: 12px 14px;
+    border-radius: 10px;
+    cursor: pointer;
+    border: 1px solid var(--border-color);
+    transition: all 0.2s ease;
+    background: #fff;
+    box-shadow: var(--shadow-sm);
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.webshell-item:hover {
+    background: var(--bg-secondary);
+    border-color: var(--accent-color);
+    box-shadow: 0 2px 8px rgba(0, 102, 255, 0.08);
+}
+
+.webshell-item.active {
+    background: linear-gradient(135deg, rgba(0, 102, 255, 0.08) 0%, rgba(0, 102, 255, 0.04) 100%);
+    border-color: var(--accent-color);
+    box-shadow: 0 2px 12px rgba(0, 102, 255, 0.12);
+}
+
+.webshell-item-remark {
+    font-weight: 600;
+    color: var(--text-primary);
+    font-size: 0.9rem;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.webshell-item-url {
+    font-size: 0.78rem;
+    color: var(--text-secondary);
+    font-family: ui-monospace, monospace;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.webshell-item-actions {
+    margin-top: 6px;
+    flex-shrink: 0;
+}
+
+.webshell-delete-btn {
+    padding: 6px 12px;
+    border-radius: 6px;
+    font-size: 0.8rem;
+    color: var(--error-color);
+    border: 1px solid transparent;
+    transition: all 0.2s ease;
+}
+
+.webshell-delete-btn:hover {
+    background: rgba(220, 53, 69, 0.08);
+    border-color: rgba(220, 53, 69, 0.3);
+}
+
+.webshell-main {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    background: var(--bg-primary);
+}
+
+.webshell-workspace {
+    flex: 1;
+    overflow: auto;
+    padding: 20px 24px;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+}
+
+.webshell-workspace-placeholder {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    min-height: 280px;
+    color: var(--text-muted);
+    font-size: 0.95rem;
+    text-align: center;
+    padding: 32px;
+    background: linear-gradient(180deg, rgba(255,255,255,0.8) 0%, rgba(248,249,250,0.9) 100%);
+    border-radius: 12px;
+    border: 1px dashed var(--border-color);
+}
+
+.webshell-workspace-placeholder::before {
+    content: '';
+    width: 64px;
+    height: 64px;
+    margin-bottom: 16px;
+    background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23adb5bd' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round' opacity='0.8'%3E%3Cpath d='M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71'/%3E%3Cpath d='M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71'/%3E%3C/svg%3E") center/contain no-repeat;
+}
+
+.webshell-tabs {
+    display: flex;
+    gap: 4px;
+    margin-bottom: 20px;
+    border-bottom: 2px solid var(--border-color);
+    padding-bottom: 0;
+}
+
+.webshell-tab {
+    padding: 10px 20px;
+    border: none;
+    background: none;
+    color: var(--text-secondary);
+    cursor: pointer;
+    font-size: 0.95rem;
+    font-weight: 500;
+    border-bottom: 3px solid transparent;
+    margin-bottom: -2px;
+    border-radius: 6px 6px 0 0;
+    transition: color 0.2s ease, background 0.2s ease;
+}
+
+.webshell-tab:hover {
+    color: var(--text-primary);
+    background: var(--bg-secondary);
+}
+
+.webshell-tab.active {
+    color: var(--accent-color);
+    border-bottom-color: var(--accent-color);
+    background: transparent;
+}
+
+.webshell-pane {
+    display: none;
+    flex: 1;
+    min-height: 0;
+    flex-direction: column;
+}
+
+.webshell-pane.active {
+    display: flex;
+}
+
+/* 仅外框圆角，内部不做额外装饰，避免挡住文字 */
+.webshell-terminal-container {
+    flex: 1;
+    min-height: 360px;
+    padding: 0;
+    background: #0d1117;
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    transform: translateZ(0);
+    backface-visibility: hidden;
+}
+
+.webshell-terminal-container .terminal {
+    width: 100%;
+    height: 100%;
+    padding: 12px 14px;
+    box-sizing: border-box;
+    overflow: hidden;
+}
+
+/* 防止 xterm 辅助层（.xterm-helper-textarea）遮挡终端文字：移出视口并缩小 */
+.webshell-terminal-container .xterm .xterm-helper-textarea {
+    left: -9999em !important;
+    width: 1px !important;
+    height: 1px !important;
+    min-width: 0 !important;
+    min-height: 0 !important;
+    opacity: 0 !important;
+    position: absolute !important;
+    z-index: -10 !important;
+}
+/* 确保光标层不超出单元格，避免整行被蓝条挡住 */
+.webshell-terminal-container .xterm-screen {
+    overflow: hidden;
+}
+
+.webshell-terminal-container .xterm-viewport {
+    overflow: hidden;
+}
+
+/* WebShell 终端滚动条：深色主题、细窄、圆角，弱化存在感 */
+.webshell-terminal-container .xterm-viewport {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(110, 118, 129, 0.5) transparent;
+}
+.webshell-terminal-container .xterm-viewport::-webkit-scrollbar {
+    width: 6px;
+}
+.webshell-terminal-container .xterm-viewport::-webkit-scrollbar-track {
+    background: transparent;
+    margin: 4px 0;
+    border-radius: 3px;
+}
+.webshell-terminal-container .xterm-viewport::-webkit-scrollbar-thumb {
+    background: rgba(110, 118, 129, 0.4);
+    border-radius: 3px;
+}
+.webshell-terminal-container .xterm-viewport::-webkit-scrollbar-thumb:hover {
+    background: rgba(110, 118, 129, 0.65);
+}
+.webshell-terminal-container .xterm-viewport::-webkit-scrollbar-thumb:active {
+    background: rgba(139, 148, 158, 0.7);
+}
+
+.webshell-file-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    margin-bottom: 16px;
+    flex-wrap: wrap;
+    padding: 14px 16px;
+    background: var(--bg-secondary);
+    border-radius: 10px;
+    border: 1px solid var(--border-color);
+}
+
+.webshell-file-toolbar label {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-weight: 500;
+    color: var(--text-primary);
+    flex: 1;
+    min-width: 0;
+}
+
+.webshell-file-toolbar input.form-control {
+    min-width: 200px;
+    flex: 1;
+    max-width: 480px;
+    padding: 8px 12px;
+    border-radius: 8px;
+    border: 1px solid var(--border-color);
+}
+
+.webshell-file-toolbar .btn-secondary,
+.webshell-file-toolbar .btn-ghost {
+    padding: 8px 16px;
+    border-radius: 8px;
+    font-weight: 500;
+    transition: all 0.2s ease;
+}
+
+.webshell-file-list {
+    flex: 1;
+    overflow: auto;
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    padding: 0;
+    background: var(--bg-primary);
+    box-shadow: var(--shadow-sm);
+}
+
+.webshell-file-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.9rem;
+}
+
+.webshell-file-table thead {
+    background: linear-gradient(180deg, #f8f9fa 0%, #f1f3f5 100%);
+}
+
+.webshell-file-table th {
+    padding: 12px 16px;
+    text-align: left;
+    font-weight: 600;
+    color: var(--text-primary);
+    border-bottom: 2px solid var(--border-color);
+}
+
+.webshell-file-table td {
+    padding: 10px 16px;
+    text-align: left;
+    border-bottom: 1px solid var(--border-color);
+    transition: background 0.15s ease;
+}
+
+.webshell-file-table tbody tr:hover {
+    background: var(--bg-secondary);
+}
+
+.webshell-file-table tbody tr:last-child td {
+    border-bottom: none;
+}
+
+.webshell-file-table a.webshell-file-link {
+    color: var(--accent-color);
+    text-decoration: none;
+    font-weight: 500;
+    padding: 2px 4px;
+    border-radius: 4px;
+    transition: background 0.15s ease, color 0.15s ease;
+}
+
+.webshell-file-table a.webshell-file-link:hover {
+    background: rgba(0, 102, 255, 0.08);
+    color: var(--accent-hover);
+}
+
+.webshell-file-table .webshell-file-read {
+    color: var(--accent-color);
+    margin-right: 8px;
+    padding: 4px 10px;
+    border-radius: 6px;
+    font-size: 0.82rem;
+}
+
+.webshell-file-table .webshell-file-read:hover {
+    background: rgba(0, 102, 255, 0.1);
+}
+
+.webshell-file-table .webshell-file-del {
+    color: var(--error-color);
+    padding: 4px 10px;
+    border-radius: 6px;
+    font-size: 0.82rem;
+}
+
+.webshell-file-table .webshell-file-del:hover {
+    background: rgba(220, 53, 69, 0.08);
+}
+
+.webshell-loading {
+    padding: 24px 20px;
+    color: var(--text-muted);
+    text-align: center;
+}
+
+.webshell-file-error {
+    padding: 20px;
+    color: var(--error-color);
+    background: rgba(220, 53, 69, 0.06);
+    border-radius: 10px;
+    margin: 8px;
+}
+
+.webshell-file-raw,
+.webshell-file-content pre {
+    white-space: pre-wrap;
+    word-break: break-all;
+    font-size: 0.82rem;
+    margin-top: 12px;
+    padding: 16px;
+    background: var(--bg-secondary);
+    border-radius: 10px;
+    border: 1px solid var(--border-color);
+}
+
+.webshell-file-content {
+    padding: 12px 0;
+}
+
+.webshell-file-content .btn-ghost {
+    margin-top: 12px;
+    padding: 8px 16px;
+    border-radius: 8px;
+}
+
+.webshell-file-edit-wrap {
+    padding: 16px 0;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+.webshell-file-edit-path {
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+    padding: 8px 12px;
+    font-family: ui-monospace, monospace;
+    word-break: break-all;
+    background: var(--bg-secondary, rgba(0, 0, 0, 0.04));
+    border-radius: 8px;
+    border: 1px solid var(--border-color);
+}
+.webshell-file-edit-textarea {
+    width: 100%;
+    min-height: 280px;
+    padding: 14px;
+    font-size: 0.82rem;
+    font-family: ui-monospace, monospace;
+    line-height: 1.5;
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    resize: vertical;
+    box-sizing: border-box;
+    transition: border-color 0.2s, box-shadow 0.2s;
+}
+.webshell-file-edit-textarea:focus {
+    outline: none;
+    border-color: var(--accent-color);
+    box-shadow: 0 0 0 2px rgba(0, 102, 255, 0.15);
+}
+.webshell-file-edit-actions {
+    margin-top: 4px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border-color);
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+    flex-shrink: 0;
+}
+.webshell-file-edit-actions .btn-primary,
+.webshell-file-edit-actions .btn-ghost {
+    min-width: 72px;
+}
+
 /* 仪表盘页面样式（最佳实践布局 + 视觉增强） */
 .dashboard-page {
     height: 100%;

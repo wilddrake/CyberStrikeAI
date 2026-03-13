@@ -135,6 +135,15 @@
                             <span data-i18n="nav.vulnerabilities">漏洞管理</span>
                         </div>
                     </div>
+                    <div class="nav-item" data-page="webshell">
+                        <div class="nav-item-content" data-title="WebShell管理" onclick="switchPage('webshell')" data-i18n="nav.webshell" data-i18n-attr="data-title" data-i18n-skip-text="true">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <polyline points="4 17 10 11 4 5"></polyline>
+                                <line x1="12" y1="19" x2="20" y2="19"></line>
+                            </svg>
+                            <span data-i18n="nav.webshell">WebShell管理</span>
+                        </div>
+                    </div>
                     <div class="nav-item nav-item-has-submenu" data-page="mcp">
                         <div class="nav-item-content" data-title="MCP" onclick="toggleSubmenu('mcp')" data-i18n="nav.mcp" data-i18n-attr="data-title" data-i18n-skip-text="true">
                             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -948,6 +957,32 @@
                         
                         <!-- 分页控件 -->
                         <div id="vulnerability-pagination" class="pagination-container pagination-fixed"></div>
+                    </div>
+                </div>
+
+                <!-- WebShell 管理页面 -->
+                <div id="page-webshell" class="page">
+                    <div class="page-header">
+                        <h2 data-i18n="webshell.title">WebShell 管理</h2>
+                        <div class="page-header-actions">
+                            <button class="btn-primary" onclick="showAddWebshellModal()" data-i18n="webshell.addConnection">添加连接</button>
+                        </div>
+                    </div>
+                    <div class="page-content webshell-page-content">
+                        <div class="webshell-layout">
+                            <div id="webshell-sidebar" class="webshell-sidebar">
+                                <div class="webshell-sidebar-header" data-i18n="webshell.connections">连接列表</div>
+                                <div id="webshell-list" class="webshell-list">
+                                    <div class="webshell-empty" data-i18n="webshell.noConnections">暂无连接，请点击「添加连接」</div>
+                                </div>
+                            </div>
+                            <div id="webshell-resize-handle" class="webshell-resize-handle" title="拖拽调整宽度"></div>
+                            <div class="webshell-main">
+                                <div id="webshell-workspace" class="webshell-workspace">
+                                    <div class="webshell-workspace-placeholder" data-i18n="webshell.selectOrAdd">请从左侧选择连接，或添加新的 WebShell 连接</div>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 </div>
 
@@ -2096,6 +2131,57 @@ version: 1.0.0<br>
         </div>
     </div>
 
+    <!-- WebShell 添加连接模态框 -->
+    <div id="webshell-modal" class="modal">
+        <div class="modal-content" style="max-width: 560px;">
+            <div class="modal-header">
+                <h2 id="webshell-modal-title" data-i18n="webshell.addConnection">添加连接</h2>
+                <span class="modal-close" onclick="closeWebshellModal()">&times;</span>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="webshell-edit-id" value="" />
+                <div class="form-group">
+                    <label for="webshell-url"><span data-i18n="webshell.url">Shell 地址</span> <span style="color: red;">*</span></label>
+                    <input type="text" id="webshell-url" data-i18n="webshell.urlPlaceholder" data-i18n-attr="placeholder" placeholder="http(s)://target.com/shell.php" />
+                </div>
+                <div class="form-group">
+                    <label for="webshell-password" data-i18n="webshell.password">连接密码/密钥</label>
+                    <input type="text" id="webshell-password" data-i18n="webshell.passwordPlaceholder" data-i18n-attr="placeholder" placeholder="如冰蝎/蚁剑的连接密码" />
+                </div>
+                <div class="form-group">
+                    <label for="webshell-type" data-i18n="webshell.type">Shell 类型</label>
+                    <select id="webshell-type">
+                        <option value="php" data-i18n="webshell.typePhp">PHP</option>
+                        <option value="asp" data-i18n="webshell.typeAsp">ASP</option>
+                        <option value="aspx" data-i18n="webshell.typeAspx">ASPX</option>
+                        <option value="jsp" data-i18n="webshell.typeJsp">JSP</option>
+                        <option value="custom" data-i18n="webshell.typeCustom">自定义</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="webshell-method" data-i18n="webshell.method">请求方式</label>
+                    <select id="webshell-method">
+                        <option value="post" data-i18n="webshell.methodPost">POST</option>
+                        <option value="get" data-i18n="webshell.methodGet">GET</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="webshell-cmd-param" data-i18n="webshell.cmdParam">命令参数名</label>
+                    <input type="text" id="webshell-cmd-param" data-i18n="webshell.cmdParamPlaceholder" data-i18n-attr="placeholder" placeholder="不填默认为 cmd，如 xxx 则请求为 xxx=命令" />
+                </div>
+                <div class="form-group">
+                    <label for="webshell-remark" data-i18n="webshell.remark">备注</label>
+                    <input type="text" id="webshell-remark" data-i18n="webshell.remarkPlaceholder" data-i18n-attr="placeholder" placeholder="便于识别的备注名" />
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn-secondary" id="webshell-test-btn" onclick="testWebshellConnection()" data-i18n="webshell.testConnectivity">测试连通性</button>
+                <button class="btn-secondary" onclick="closeWebshellModal()" data-i18n="common.cancel">取消</button>
+                <button class="btn-primary" onclick="saveWebshellConnection()" data-i18n="common.save">保存</button>
+            </div>
+        </div>
+    </div>
+
     <!-- 角色选择弹窗 -->
     <div id="role-select-modal" class="modal">
         <div class="modal-content role-select-modal-content">
@@ -2227,6 +2313,7 @@ version: 1.0.0<br>
     <script src="/static/js/knowledge.js"></script>
     <script src="/static/js/skills.js"></script>
     <script src="/static/js/vulnerability.js?v=4"></script>
+    <script src="/static/js/webshell.js"></script>
     <script src="/static/js/tasks.js"></script>
     <script src="/static/js/roles.js"></script>
 </body>

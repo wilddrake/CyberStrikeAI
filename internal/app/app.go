@@ -15,11 +15,11 @@ import (
 	"cyberstrike-ai/internal/database"
 	"cyberstrike-ai/internal/handler"
 	"cyberstrike-ai/internal/knowledge"
-	"cyberstrike-ai/internal/robot"
 	"cyberstrike-ai/internal/logger"
 	"cyberstrike-ai/internal/mcp"
 	"cyberstrike-ai/internal/mcp/builtin"
 	"cyberstrike-ai/internal/openai"
+	"cyberstrike-ai/internal/robot"
 	"cyberstrike-ai/internal/security"
 	"cyberstrike-ai/internal/skills"
 	"cyberstrike-ai/internal/storage"
@@ -46,7 +46,7 @@ type App struct {
 	knowledgeHandler   *handler.KnowledgeHandler // 知识库处理器（用于动态初始化）
 	agentHandler       *handler.AgentHandler     // Agent处理器（用于更新知识库管理器）
 	robotHandler       *handler.RobotHandler     // 机器人处理器（钉钉/飞书/企业微信）
-	robotMu            sync.Mutex                 // 保护钉钉/飞书长连接的 cancel
+	robotMu            sync.Mutex                // 保护钉钉/飞书长连接的 cancel
 	dingCancel         context.CancelFunc        // 钉钉 Stream 取消函数，用于配置变更时重启
 	larkCancel         context.CancelFunc        // 飞书长连接取消函数，用于配置变更时重启
 }
@@ -319,6 +319,7 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 	authHandler := handler.NewAuthHandler(authManager, cfg, configPath, log.Logger)
 	attackChainHandler := handler.NewAttackChainHandler(db, &cfg.OpenAI, log.Logger)
 	vulnerabilityHandler := handler.NewVulnerabilityHandler(db, log.Logger)
+	webshellHandler := handler.NewWebShellHandler(log.Logger, db)
 	configHandler := handler.NewConfigHandler(configPath, cfg, mcpServer, executor, agent, attackChainHandler, externalMCPMgr, log.Logger)
 	externalMCPHandler := handler.NewExternalMCPHandler(externalMCPMgr, cfg, configPath, log.Logger)
 	roleHandler := handler.NewRoleHandler(cfg, configPath, log.Logger)
@@ -429,6 +430,7 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		attackChainHandler,
 		app, // 传递 App 实例以便动态获取 knowledgeHandler
 		vulnerabilityHandler,
+		webshellHandler,
 		roleHandler,
 		skillsHandler,
 		fofaHandler,
@@ -556,6 +558,7 @@ func setupRoutes(
 	attackChainHandler *handler.AttackChainHandler,
 	app *App, // 传递 App 实例以便动态获取 knowledgeHandler
 	vulnerabilityHandler *handler.VulnerabilityHandler,
+	webshellHandler *handler.WebShellHandler,
 	roleHandler *handler.RoleHandler,
 	skillsHandler *handler.SkillsHandler,
 	fofaHandler *handler.FofaHandler,
@@ -816,6 +819,14 @@ func setupRoutes(
 		protected.POST("/vulnerabilities", vulnerabilityHandler.CreateVulnerability)
 		protected.PUT("/vulnerabilities/:id", vulnerabilityHandler.UpdateVulnerability)
 		protected.DELETE("/vulnerabilities/:id", vulnerabilityHandler.DeleteVulnerability)
+
+		// WebShell 管理（代理执行 + 连接配置存 SQLite）
+		protected.GET("/webshell/connections", webshellHandler.ListConnections)
+		protected.POST("/webshell/connections", webshellHandler.CreateConnection)
+		protected.PUT("/webshell/connections/:id", webshellHandler.UpdateConnection)
+		protected.DELETE("/webshell/connections/:id", webshellHandler.DeleteConnection)
+		protected.POST("/webshell/exec", webshellHandler.Exec)
+		protected.POST("/webshell/file", webshellHandler.FileOp)
 
 		// 角色管理
 		protected.GET("/roles", roleHandler.GetRoles)
