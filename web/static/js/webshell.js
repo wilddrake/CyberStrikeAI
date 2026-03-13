@@ -2,6 +2,8 @@
 
 const WEBSHELL_SIDEBAR_WIDTH_KEY = 'webshell_sidebar_width';
 const WEBSHELL_DEFAULT_SIDEBAR_WIDTH = 360;
+/** 右侧主区域（终端/文件管理）最小宽度，避免拖到中间时右边变形 */
+const WEBSHELL_MAIN_MIN_WIDTH = 380;
 const WEBSHELL_PROMPT = 'shell> ';
 let webshellConnections = [];
 let currentWebshellId = null;
@@ -16,6 +18,8 @@ let webshellRunning = false;
 let webshellHistoryByConn = {};
 let webshellHistoryIndex = -1;
 const WEBSHELL_HISTORY_MAX = 100;
+// 清屏防重入：一次点击只执行一次（避免多次绑定或重复触发导致多个 shell>）
+let webshellClearInProgress = false;
 
 // 从服务端（SQLite）拉取连接列表
 function getWebshellConnections() {
@@ -92,8 +96,31 @@ function wsT(key) {
     return fallback[key] || key;
 }
 
+// 全局只绑定一次：清屏 = 销毁终端并重新创建，保证只出现一个 shell>（不依赖 xterm.clear()，避免某些环境下 clear 不生效或重复写入）
+function bindWebshellClearOnce() {
+    if (window._webshellClearBound) return;
+    window._webshellClearBound = true;
+    document.body.addEventListener('click', function (e) {
+        var btn = e.target && (e.target.id === 'webshell-terminal-clear' ? e.target : e.target.closest ? e.target.closest('#webshell-terminal-clear') : null);
+        if (!btn || !webshellCurrentConn) return;
+        e.preventDefault();
+        e.stopPropagation();
+        if (webshellClearInProgress) return;
+        webshellClearInProgress = true;
+        try {
+            destroyWebshellTerminal();
+            webshellLineBuffer = '';
+            webshellHistoryIndex = -1;
+            initWebshellTerminal(webshellCurrentConn);
+        } finally {
+            setTimeout(function () { webshellClearInProgress = false; }, 100);
+        }
+    }, true);
+}
+
 // 初始化 WebShell 管理页面（从 SQLite 拉取连接列表）
 function initWebshellPage() {
+    bindWebshellClearOnce();
     destroyWebshellTerminal();
     webshellCurrentConn = null;
     currentWebshellId = null;
@@ -125,7 +152,11 @@ function setWebshellSidebarWidth(px) {
 
 function applyWebshellSidebarWidth() {
     const sidebar = document.getElementById('webshell-sidebar');
-    if (sidebar) sidebar.style.width = getWebshellSidebarWidth() + 'px';
+    if (!sidebar) return;
+    const parentW = sidebar.parentElement ? sidebar.parentElement.offsetWidth : 0;
+    let w = getWebshellSidebarWidth();
+    if (parentW > 0) w = Math.min(w, Math.max(260, parentW - WEBSHELL_MAIN_MIN_WIDTH));
+    sidebar.style.width = w + 'px';
 }
 
 function initWebshellSidebarResize() {
@@ -137,8 +168,9 @@ function initWebshellSidebarResize() {
     function onMove(e) {
         const dx = e.clientX - startX;
         let w = Math.round(startW + dx);
+        const parentW = sidebar.parentElement ? sidebar.parentElement.offsetWidth : 800;
         const min = 260;
-        const max = Math.min(800, Math.floor((sidebar.parentElement && sidebar.parentElement.offsetWidth || 800) * 0.6));
+        const max = Math.min(800, parentW - WEBSHELL_MAIN_MIN_WIDTH);
         w = Math.max(min, Math.min(max, w));
         sidebar.style.width = w + 'px';
     }
@@ -322,15 +354,7 @@ function selectWebshell(id) {
         webshellFileListDir(webshellCurrentConn, pathInput.value || '.');
     });
 
-    // 清屏
-    var clearBtn = document.getElementById('webshell-terminal-clear');
-    if (clearBtn) clearBtn.addEventListener('click', function () {
-        if (webshellTerminalInstance) {
-            webshellTerminalInstance.clear();
-            webshellLineBuffer = '';
-            webshellTerminalInstance.write(WEBSHELL_PROMPT);
-        }
-    });
+    // 清屏由 bindWebshellClearOnce 统一事件委托处理，此处不再绑定，避免重复绑定导致一次点击出现多个 shell>
     // 快捷命令：点击后执行并输出到终端
     workspace.querySelectorAll('.webshell-quick-cmd').forEach(function (btn) {
         btn.addEventListener('click', function () {

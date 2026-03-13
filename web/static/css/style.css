@@ -8661,7 +8661,7 @@ header {
 
 .webshell-main {
     flex: 1;
-    min-width: 0;
+    min-width: 380px;
     display: flex;
     flex-direction: column;
     overflow: hidden;
@@ -8675,6 +8675,7 @@ header {
     display: flex;
     flex-direction: column;
     min-height: 0;
+    min-width: 0;
 }
 
 .webshell-workspace-placeholder {
@@ -8736,13 +8737,17 @@ header {
 
 .webshell-pane {
     display: none;
-    flex: 1;
+    flex: 1 1 0;
     min-height: 0;
+    min-width: 0;
     flex-direction: column;
+    overflow: hidden;
+    width: 100%;
 }
 
 .webshell-pane.active {
     display: flex;
+    width: 100%;
 }
 
 .webshell-terminal-toolbar {
@@ -8847,20 +8852,28 @@ header {
     background: var(--bg-secondary);
     border-radius: 10px;
     border: 1px solid var(--border-color);
+    width: 100%;
+    min-width: 0;
+    box-sizing: border-box;
 }
 
 .webshell-file-toolbar label {
-    display: flex;
+    display: inline-flex;
     align-items: center;
     gap: 10px;
     font-weight: 500;
     color: var(--text-primary);
-    flex: 1;
+    flex: 1 1 200px;
     min-width: 0;
 }
 
+.webshell-file-toolbar label span {
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
 .webshell-file-toolbar input.form-control {
-    min-width: 200px;
+    min-width: 0;
     flex: 1;
     max-width: 480px;
     padding: 8px 12px;
@@ -8874,14 +8887,16 @@ header {
     border-radius: 8px;
     font-weight: 500;
     transition: all 0.2s ease;
+    flex-shrink: 0;
 }
 
 .webshell-file-breadcrumb {
     width: 100%;
-    flex: 1 1 100%;
+    flex: 0 0 100%;
     font-size: 0.875rem;
     color: var(--text-secondary);
     margin-bottom: 4px;
+    min-width: 0;
 }
 .webshell-file-breadcrumb a.webshell-breadcrumb-item {
     color: var(--accent-color);
@@ -8893,8 +8908,9 @@ header {
     background: rgba(0, 102, 255, 0.08);
 }
 .webshell-file-filter {
-    min-width: 140px !important;
-    max-width: 200px !important;
+    min-width: 0 !important;
+    flex: 0 1 140px;
+    max-width: 200px;
 }
 .webshell-col-check {
     width: 36px;
@@ -8909,12 +8925,15 @@ header {
 
 .webshell-file-list {
     flex: 1;
+    min-height: 0;
+    min-width: 0;
     overflow: auto;
     border: 1px solid var(--border-color);
     border-radius: 12px;
     padding: 0;
     background: var(--bg-primary);
     box-shadow: var(--shadow-sm);
+    width: 100%;
 }
 
 .webshell-file-table {
