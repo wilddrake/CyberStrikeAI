@@ -174,10 +174,20 @@ go build -o cyberstrike-ai cmd/server/main.go
 
 ### Version Update (No Breaking Changes)
 
-**CyberStrikeAI version update (when there are no compatibility changes):**
-1. Download the latest source code.
-2. Copy the old project's `/data` folder and `config.yaml` file into the new source directory.
-3. Restart with: `chmod +x run.sh && ./run.sh`
+**CyberStrikeAI one-click upgrade (recommended):**
+1. (First time) enable the script: `chmod +x upgrade.sh`
+2. Upgrade with: `./upgrade.sh` (optional flags: `--tag vX.Y.Z`, `--no-venv`, `--preserve-custom`, `--yes`)
+3. The script will back up your `config.yaml` and `data/`, upgrade the code from GitHub Release, update `config.yaml`'s `version`, then restart the server.
+
+Recommended one-liner:
+`chmod +x upgrade.sh && ./upgrade.sh --yes`
+
+If something goes wrong, you can restore from `.upgrade-backup/` (or manually copy `/data` and `config.yaml` back) and run `./run.sh` again.
+
+Requirements / tips:
+* You need `curl` or `wget` for downloading Release packages.
+* `rsync` is recommended/required for the safe code sync.
+* If GitHub API rate-limits you, set `export GITHUB_TOKEN="..."` before running `./upgrade.sh`.
 
 ⚠️ **Note:** This procedure only applies to version updates without compatibility or breaking changes. If a release includes compatibility changes, this method may not apply.
 
