@@ -1101,16 +1101,16 @@ function handleStreamEvent(event, progressElement, progressId,
                 loadActiveTasks();
             }
 
-            // 主回复开始流式输出时隐藏整条进度卡片（迭代阶段默认展开；最终回复时不再占屏）
-            hideProgressMessageForFinalReply(progressId);
-
-            // 已存在则复用；否则创建空助手消息占位，用于增量追加
-            const existing = responseStreamStateByProgressId.get(progressId);
-            if (existing && existing.assistantId) break;
-
-            const assistantId = addMessage('assistant', '', mcpIds, progressId);
-            setAssistantId(assistantId);
-            responseStreamStateByProgressId.set(progressId, { assistantId, buffer: '' });
+            // 多代理模式下，迭代过程中的输出只显示在时间线中，不创建助手消息气泡
+            // 创建时间线条目用于显示迭代过程中的输出
+            const agentPrefix = timelineAgentBracketPrefix(responseData);
+            const title = agentPrefix + '📝 ' + (typeof window.t === 'function' ? window.t('chat.planning') : '规划中');
+            const itemId = addTimelineItem(timeline, 'thinking', {
+                title: title,
+                message: ' ',
+                data: responseData
+            });
+            responseStreamStateByProgressId.set(progressId, { itemId: itemId, buffer: '' });
             break;
         }
 
@@ -1126,19 +1126,31 @@ function handleStreamEvent(event, progressElement, progressId,
                 }
             }
 
-            hideProgressMessageForFinalReply(progressId);
-
+            // 多代理模式下，迭代过程中的输出只显示在时间线中
+            // 更新时间线条目内容
             let state = responseStreamStateByProgressId.get(progressId);
-            if (!state || !state.assistantId) {
-                const mcpIds = responseData.mcpExecutionIds || [];
-                const assistantId = addMessage('assistant', '', mcpIds, progressId);
-                setAssistantId(assistantId);
-                state = { assistantId, buffer: '' };
+            if (!state) {
+                state = { itemId: null, buffer: '' };
                 responseStreamStateByProgressId.set(progressId, state);
             }
 
-            state.buffer += (event.message || '');
-            updateAssistantBubbleContent(state.assistantId, state.buffer, false);
+            const deltaContent = event.message || '';
+            state.buffer += deltaContent;
+
+            // 更新时间线条目内容
+            if (state.itemId) {
+                const item = document.getElementById(state.itemId);
+                if (item) {
+                    const contentEl = item.querySelector('.timeline-item-content');
+                    if (contentEl) {
+                        if (typeof formatMarkdown === 'function') {
+                            contentEl.innerHTML = formatMarkdown(state.buffer);
+                        } else {
+                            contentEl.textContent = state.buffer;
+                        }
+                    }
+                }
+            }
             break;
         }
 
@@ -1178,6 +1190,9 @@ function handleStreamEvent(event, progressElement, progressId,
                 setAssistantId(assistantIdFinal);
                 updateAssistantBubbleContent(assistantIdFinal, event.message, true);
             }
+
+            // 最终回复时隐藏进度卡片（多代理模式下，迭代过程已完整展示）
+            hideProgressMessageForFinalReply(progressId);
 
             // 将进度详情集成到工具调用区域（放在最终 response 之后，保证时间线已完整）
             integrateProgressToMCPSection(progressId, assistantIdFinal, mcpIds);

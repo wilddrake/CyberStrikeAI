@@ -146,6 +146,7 @@
     "callNumber": "调用 #{{n}}",
     "iterationRound": "第 {{n}} 轮迭代",
     "aiThinking": "AI思考",
+    "planning": "规划中",
     "toolCallsDetected": "检测到 {{count}} 个工具调用",
     "callTool": "调用工具: {{name}} ({{index}}/{{total}})",
     "toolExecComplete": "工具 {{name}} 执行完成",

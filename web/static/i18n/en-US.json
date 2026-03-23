@@ -146,6 +146,7 @@
     "callNumber": "Call #{{n}}",
     "iterationRound": "Iteration {{n}}",
     "aiThinking": "AI thinking",
+    "planning": "Planning",
     "toolCallsDetected": "Detected {{count}} tool call(s)",
     "callTool": "Call tool: {{name}} ({{index}}/{{total}})",
     "toolExecComplete": "Tool {{name}} completed",
