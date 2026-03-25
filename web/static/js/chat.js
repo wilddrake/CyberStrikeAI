@@ -4076,6 +4076,7 @@ let contextMenuGroupId = null;
 let groupsCache = [];
 let conversationGroupMappingCache = {};
 let pendingGroupMappings = {}; // 待保留的分组映射（用于处理后端API延迟的情况）
+let conversationsListLoadSeq = 0; // 对话列表加载序号，避免并发请求导致重复渲染
 
 // 加载分组列表
 async function loadGroups() {
@@ -4170,11 +4171,14 @@ async function loadGroups() {
 
 // 加载对话列表（修改为支持分组和置顶）
 async function loadConversationsWithGroups(searchQuery = '') {
+    const loadSeq = ++conversationsListLoadSeq;
     try {
         // 总是重新加载分组列表和分组映射，确保缓存是最新的
         // 这样可以正确处理分组被删除后的情况
         await loadGroups();
+        if (loadSeq !== conversationsListLoadSeq) return;
         await loadConversationGroupMapping();
+        if (loadSeq !== conversationsListLoadSeq) return;
 
         // 如果有搜索关键词，使用更大的limit以获取所有匹配结果
         const limit = (searchQuery && searchQuery.trim()) ? 1000 : 100;
@@ -4183,6 +4187,7 @@ async function loadConversationsWithGroups(searchQuery = '') {
             url += '&search=' + encodeURIComponent(searchQuery.trim());
         }
         const response = await apiFetch(url);
+        if (loadSeq !== conversationsListLoadSeq) return;
 
         const listContainer = document.getElementById('conversations-list');
         if (!listContainer) {
@@ -4204,8 +4209,20 @@ async function loadConversationsWithGroups(searchQuery = '') {
         }
 
         const conversations = await response.json();
+        if (loadSeq !== conversationsListLoadSeq) return;
 
-        if (!Array.isArray(conversations) || conversations.length === 0) {
+        // 双重保险：后端或并发情况下若出现重复ID，前端按ID去重
+        const uniqueConversations = [];
+        const seenConversationIds = new Set();
+        (Array.isArray(conversations) ? conversations : []).forEach(conv => {
+            if (!conv || !conv.id || seenConversationIds.has(conv.id)) {
+                return;
+            }
+            seenConversationIds.add(conv.id);
+            uniqueConversations.push(conv);
+        });
+
+        if (uniqueConversations.length === 0) {
             listContainer.innerHTML = emptyStateHtml;
             if (typeof window.applyTranslations === 'function') window.applyTranslations(listContainer);
             return;
@@ -4216,7 +4233,7 @@ async function loadConversationsWithGroups(searchQuery = '') {
         const normalConvs = [];
         const hasSearchQuery = searchQuery && searchQuery.trim();
 
-        conversations.forEach(conv => {
+        uniqueConversations.forEach(conv => {
             // 如果有搜索关键词，显示所有匹配的对话（全局搜索，包括分组中的）
             if (hasSearchQuery) {
                 // 搜索时显示所有匹配的对话，不管是否在分组中
@@ -4273,6 +4290,7 @@ async function loadConversationsWithGroups(searchQuery = '') {
             return;
         }
 
+        if (loadSeq !== conversationsListLoadSeq) return;
         listContainer.appendChild(fragment);
         updateActiveConversation();
         
@@ -4280,10 +4298,13 @@ async function loadConversationsWithGroups(searchQuery = '') {
         if (sidebarContent) {
             // 使用 requestAnimationFrame 确保 DOM 已经更新
             requestAnimationFrame(() => {
-                sidebarContent.scrollTop = savedScrollTop;
+                if (loadSeq === conversationsListLoadSeq) {
+                    sidebarContent.scrollTop = savedScrollTop;
+                }
             });
         }
     } catch (error) {
+        if (loadSeq !== conversationsListLoadSeq) return;
         console.error('加载对话列表失败:', error);
         // 错误时显示空状态，而不是错误提示（更友好的用户体验）
         const listContainer = document.getElementById('conversations-list');
