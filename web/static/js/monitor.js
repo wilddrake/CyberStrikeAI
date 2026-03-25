@@ -628,6 +628,29 @@ function handleStreamEvent(event, progressElement, progressId,
                           getAssistantId, setAssistantId, getMcpIds, setMcpIds) {
     const timeline = document.getElementById(progressId + '-timeline');
     if (!timeline) return;
+
+    // 终态事件（error/cancelled）优先复用现有助手消息，避免重复追加相同报错
+    const upsertTerminalAssistantMessage = (message, preferredMessageId = null) => {
+        const preferredIds = [];
+        if (preferredMessageId) preferredIds.push(preferredMessageId);
+        const existingAssistantId = typeof getAssistantId === 'function' ? getAssistantId() : null;
+        if (existingAssistantId && !preferredIds.includes(existingAssistantId)) {
+            preferredIds.push(existingAssistantId);
+        }
+
+        for (const id of preferredIds) {
+            const element = document.getElementById(id);
+            if (element) {
+                updateAssistantBubbleContent(id, message, true);
+                setAssistantId(id);
+                return { assistantId: id, assistantElement: element };
+            }
+        }
+
+        const assistantId = addMessage('assistant', message, null, progressId);
+        setAssistantId(assistantId);
+        return { assistantId: assistantId, assistantElement: document.getElementById(assistantId) };
+    };
     
     switch (event.type) {
         case 'conversation':
@@ -1033,47 +1056,19 @@ function handleStreamEvent(event, progressElement, progressId,
                 finalizeProgressTask(progressId, typeof window.t === 'function' ? window.t('tasks.statusCancelled') : '已取消');
             }
             
-            // 如果取消事件包含messageId，说明有助手消息，需要显示取消内容
-            if (event.data && event.data.messageId) {
-                // 检查助手消息是否已存在
-                let assistantId = event.data.messageId;
-                let assistantElement = document.getElementById(assistantId);
-                
-                // 如果助手消息不存在，创建它
-                if (!assistantElement) {
-                    assistantId = addMessage('assistant', event.message, null, progressId);
-                    setAssistantId(assistantId);
-                    assistantElement = document.getElementById(assistantId);
-                } else {
-                    // 如果已存在，更新内容
-                    const bubble = assistantElement.querySelector('.message-bubble');
-                    if (bubble) {
-                        bubble.innerHTML = escapeHtml(event.message).replace(/\n/g, '<br>');
-                    }
-                }
-                
-                // 将进度详情集成到工具调用区域（如果还没有）
+            // 复用已有助手消息（若有），避免终态事件重复插入消息
+            {
+                const preferredMessageId = event.data && event.data.messageId ? event.data.messageId : null;
+                const { assistantId, assistantElement } = upsertTerminalAssistantMessage(event.message, preferredMessageId);
                 if (assistantElement) {
                     const detailsId = 'process-details-' + assistantId;
                     if (!document.getElementById(detailsId)) {
                         integrateProgressToMCPSection(progressId, assistantId, typeof getMcpIds === 'function' ? (getMcpIds() || []) : []);
                     }
-                    // 立即折叠详情（取消时应该默认折叠）
                     setTimeout(() => {
                         collapseAllProgressDetails(assistantId, progressId);
                     }, 100);
                 }
-            } else {
-                // 如果没有messageId，创建助手消息并集成详情
-                const assistantId = addMessage('assistant', event.message, null, progressId);
-                setAssistantId(assistantId);
-                
-                // 将进度详情集成到工具调用区域
-                setTimeout(() => {
-                    integrateProgressToMCPSection(progressId, assistantId, typeof getMcpIds === 'function' ? (getMcpIds() || []) : []);
-                    // 确保详情默认折叠
-                    collapseAllProgressDetails(assistantId, progressId);
-                }, 100);
             }
             
             // 立即刷新任务状态
@@ -1232,47 +1227,19 @@ function handleStreamEvent(event, progressElement, progressId,
                 finalizeProgressTask(progressId, typeof window.t === 'function' ? window.t('tasks.statusFailed') : '执行失败');
             }
             
-            // 如果错误事件包含messageId，说明有助手消息，需要显示错误内容
-            if (event.data && event.data.messageId) {
-                // 检查助手消息是否已存在
-                let assistantId = event.data.messageId;
-                let assistantElement = document.getElementById(assistantId);
-                
-                // 如果助手消息不存在，创建它
-                if (!assistantElement) {
-                    assistantId = addMessage('assistant', event.message, null, progressId);
-                    setAssistantId(assistantId);
-                    assistantElement = document.getElementById(assistantId);
-                } else {
-                    // 如果已存在，更新内容
-                    const bubble = assistantElement.querySelector('.message-bubble');
-                    if (bubble) {
-                        bubble.innerHTML = escapeHtml(event.message).replace(/\n/g, '<br>');
-                    }
-                }
-                
-                // 将进度详情集成到工具调用区域（如果还没有）
+            // 复用已有助手消息（若有），避免终态事件重复插入消息
+            {
+                const preferredMessageId = event.data && event.data.messageId ? event.data.messageId : null;
+                const { assistantId, assistantElement } = upsertTerminalAssistantMessage(event.message, preferredMessageId);
                 if (assistantElement) {
                     const detailsId = 'process-details-' + assistantId;
                     if (!document.getElementById(detailsId)) {
                         integrateProgressToMCPSection(progressId, assistantId, typeof getMcpIds === 'function' ? (getMcpIds() || []) : []);
                     }
-                    // 立即折叠详情（错误时应该默认折叠）
                     setTimeout(() => {
                         collapseAllProgressDetails(assistantId, progressId);
                     }, 100);
                 }
-            } else {
-                // 如果没有messageId（比如任务已运行时的错误），创建助手消息并集成详情
-                const assistantId = addMessage('assistant', event.message, null, progressId);
-                setAssistantId(assistantId);
-                
-                // 将进度详情集成到工具调用区域
-                setTimeout(() => {
-                    integrateProgressToMCPSection(progressId, assistantId, typeof getMcpIds === 'function' ? (getMcpIds() || []) : []);
-                    // 确保详情默认折叠
-                    collapseAllProgressDetails(assistantId, progressId);
-                }, 100);
             }
             
             // 立即刷新任务状态（执行失败时任务状态会更新）
