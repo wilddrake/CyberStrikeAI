@@ -256,6 +256,53 @@ func (db *DB) GetConversation(id string) (*Conversation, error) {
 	return &conv, nil
 }
 
+// GetConversationLite 获取对话（轻量版）：包含 messages，但不加载 process_details。
+// 用于历史会话快速切换，避免一次性把大体量过程详情灌到前端导致卡顿。
+func (db *DB) GetConversationLite(id string) (*Conversation, error) {
+	var conv Conversation
+	var createdAt, updatedAt string
+	var pinned int
+
+	err := db.QueryRow(
+		"SELECT id, title, pinned, created_at, updated_at FROM conversations WHERE id = ?",
+		id,
+	).Scan(&conv.ID, &conv.Title, &pinned, &createdAt, &updatedAt)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("对话不存在")
+		}
+		return nil, fmt.Errorf("查询对话失败: %w", err)
+	}
+
+	// 尝试多种时间格式解析
+	var err1, err2 error
+	conv.CreatedAt, err1 = time.Parse("2006-01-02 15:04:05.999999999-07:00", createdAt)
+	if err1 != nil {
+		conv.CreatedAt, err1 = time.Parse("2006-01-02 15:04:05", createdAt)
+	}
+	if err1 != nil {
+		conv.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
+	}
+
+	conv.UpdatedAt, err2 = time.Parse("2006-01-02 15:04:05.999999999-07:00", updatedAt)
+	if err2 != nil {
+		conv.UpdatedAt, err2 = time.Parse("2006-01-02 15:04:05", updatedAt)
+	}
+	if err2 != nil {
+		conv.UpdatedAt, _ = time.Parse(time.RFC3339, updatedAt)
+	}
+
+	conv.Pinned = pinned != 0
+
+	// 加载消息（不加载 process_details）
+	messages, err := db.GetMessages(id)
+	if err != nil {
+		return nil, fmt.Errorf("加载消息失败: %w", err)
+	}
+	conv.Messages = messages
+	return &conv, nil
+}
+
 // ListConversations 列出所有对话
 func (db *DB) ListConversations(limit, offset int, search string) ([]*Conversation, error) {
 	var rows *sql.Rows

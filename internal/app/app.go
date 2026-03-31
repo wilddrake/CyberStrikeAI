@@ -661,6 +661,7 @@ func setupRoutes(
 		protected.POST("/conversations", conversationHandler.CreateConversation)
 		protected.GET("/conversations", conversationHandler.ListConversations)
 		protected.GET("/conversations/:id", conversationHandler.GetConversation)
+		protected.GET("/messages/:id/process-details", conversationHandler.GetMessageProcessDetails)
 		protected.PUT("/conversations/:id", conversationHandler.UpdateConversation)
 		protected.DELETE("/conversations/:id", conversationHandler.DeleteConversation)
 		protected.PUT("/conversations/:id/pinned", groupHandler.UpdateConversationPinned)

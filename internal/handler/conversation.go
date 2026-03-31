@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"encoding/json"
 	"net/http"
 	"strconv"
 
@@ -78,7 +79,20 @@ func (h *ConversationHandler) ListConversations(c *gin.Context) {
 func (h *ConversationHandler) GetConversation(c *gin.Context) {
 	id := c.Param("id")
 
-	conv, err := h.db.GetConversation(id)
+	// 默认轻量加载，只有用户需要展开详情时再按需拉取
+	// include_process_details=1/true 时返回全量 processDetails（兼容旧行为）
+	includeStr := c.DefaultQuery("include_process_details", "0")
+	include := includeStr == "1" || includeStr == "true" || includeStr == "yes"
+
+	var (
+		conv *database.Conversation
+		err  error
+	)
+	if include {
+		conv, err = h.db.GetConversation(id)
+	} else {
+		conv, err = h.db.GetConversationLite(id)
+	}
 	if err != nil {
 		h.logger.Error("获取对话失败", zap.Error(err))
 		c.JSON(http.StatusNotFound, gin.H{"error": "对话不存在"})
@@ -86,6 +100,44 @@ func (h *ConversationHandler) GetConversation(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, conv)
+}
+
+// GetMessageProcessDetails 获取指定消息的过程详情（按需加载）
+func (h *ConversationHandler) GetMessageProcessDetails(c *gin.Context) {
+	messageID := c.Param("id")
+	if messageID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "message id required"})
+		return
+	}
+
+	details, err := h.db.GetProcessDetails(messageID)
+	if err != nil {
+		h.logger.Error("获取过程详情失败", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	// 转换为前端期望的 JSON 结构（与 GetConversation 中 processDetails 结构一致）
+	out := make([]map[string]interface{}, 0, len(details))
+	for _, d := range details {
+		var data interface{}
+		if d.Data != "" {
+			if err := json.Unmarshal([]byte(d.Data), &data); err != nil {
+				h.logger.Warn("解析过程详情数据失败", zap.Error(err))
+			}
+		}
+		out = append(out, map[string]interface{}{
+			"id":             d.ID,
+			"messageId":      d.MessageID,
+			"conversationId": d.ConversationID,
+			"eventType":      d.EventType,
+			"message":        d.Message,
+			"data":           data,
+			"createdAt":      d.CreatedAt,
+		})
+	}
+
+	c.JSON(http.StatusOK, gin.H{"processDetails": out})
 }
 
 // UpdateConversationRequest 更新对话请求
