@@ -675,6 +675,7 @@ func setupRoutes(
 		protected.DELETE("/groups/:id", groupHandler.DeleteGroup)
 		protected.PUT("/groups/:id/pinned", groupHandler.UpdateGroupPinned)
 		protected.GET("/groups/:id/conversations", groupHandler.GetGroupConversations)
+		protected.GET("/groups/mappings", groupHandler.GetAllMappings)
 		protected.POST("/groups/conversations", groupHandler.AddConversationToGroup)
 		protected.DELETE("/groups/:id/conversations/:conversationId", groupHandler.RemoveConversationFromGroup)
 		protected.PUT("/groups/:id/conversations/:conversationId/pinned", groupHandler.UpdateConversationPinnedInGroup)
@@ -682,6 +683,7 @@ func setupRoutes(
 		// 监控
 		protected.GET("/monitor", monitorHandler.Monitor)
 		protected.GET("/monitor/execution/:id", monitorHandler.GetExecution)
+		protected.POST("/monitor/executions/names", monitorHandler.BatchGetToolNames)
 		protected.DELETE("/monitor/execution/:id", monitorHandler.DeleteExecution)
 		protected.DELETE("/monitor/executions", monitorHandler.DeleteExecutions)
 		protected.GET("/monitor/stats", monitorHandler.GetStats)

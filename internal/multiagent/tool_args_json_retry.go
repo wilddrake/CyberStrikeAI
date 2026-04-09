@@ -10,7 +10,7 @@ import (
 // maxToolCallRecoveryAttempts 含首次运行：首次 + 自动重试次数。
 // 例如为 3 表示最多共 3 次完整 DeepAgent 运行（2 次失败后各追加一条纠错提示）。
 // 该常量同时用于 JSON 参数错误和工具执行错误（如子代理名称不存在）的恢复重试。
-const maxToolCallRecoveryAttempts = 3
+const maxToolCallRecoveryAttempts = 5
 
 // toolCallArgumentsJSONRetryHint 追加在用户消息后，提示模型输出合法 JSON 工具参数（部分云厂商会在流式阶段校验 arguments）。
 func toolCallArgumentsJSONRetryHint() *schema.Message {

@@ -233,6 +233,9 @@ func RunDeepAgent(
 				ToolsNodeConfig: compose.ToolsNodeConfig{
 					Tools:               subTools,
 					UnknownToolsHandler: einomcp.UnknownToolReminderHandler(),
+					ToolCallMiddlewares: []compose.ToolMiddleware{
+						{Invokable: softRecoveryToolCallMiddleware()},
+					},
 				},
 				EmitInternalEvents: true,
 			},
@@ -288,6 +291,9 @@ func RunDeepAgent(
 			ToolsNodeConfig: compose.ToolsNodeConfig{
 				Tools:               mainTools,
 				UnknownToolsHandler: einomcp.UnknownToolReminderHandler(),
+				ToolCallMiddlewares: []compose.ToolMiddleware{
+					{Invokable: softRecoveryToolCallMiddleware()},
+				},
 			},
 			EmitInternalEvents: true,
 		},

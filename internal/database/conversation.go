@@ -310,15 +310,14 @@ func (db *DB) ListConversations(limit, offset int, search string) ([]*Conversati
 	var err error
 	
 	if search != "" {
-		// 使用LIKE进行模糊搜索，搜索标题和消息内容
+		// 使用 EXISTS 子查询代替 LEFT JOIN + DISTINCT，避免大表笛卡尔积
 		searchPattern := "%" + search + "%"
-		// 使用DISTINCT避免重复，因为一个对话可能有多条消息匹配
 		rows, err = db.Query(
-			`SELECT DISTINCT c.id, c.title, COALESCE(c.pinned, 0), c.created_at, c.updated_at 
+			`SELECT c.id, c.title, COALESCE(c.pinned, 0), c.created_at, c.updated_at
 			 FROM conversations c
-			 LEFT JOIN messages m ON c.id = m.conversation_id
-			 WHERE c.title LIKE ? OR m.content LIKE ?
-			 ORDER BY c.updated_at DESC 
+			 WHERE c.title LIKE ?
+			    OR EXISTS (SELECT 1 FROM messages m WHERE m.conversation_id = c.id AND m.content LIKE ?)
+			 ORDER BY c.updated_at DESC
 			 LIMIT ? OFFSET ?`,
 			searchPattern, searchPattern, limit, offset,
 		)
