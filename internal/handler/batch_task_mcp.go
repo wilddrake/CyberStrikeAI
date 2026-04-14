@@ -27,7 +27,7 @@ func RegisterBatchTaskMCPTools(mcpServer *mcp.Server, h *AgentHandler, logger *z
 	// --- list ---
 	reg(mcp.Tool{
 		Name:             builtin.ToolBatchTaskList,
-		Description:      "列出批量任务队列，支持按状态筛选与关键字搜索。用于查看队列 id、状态、进度及 Cron 配置等。",
+		Description:      "列出批量任务队列（精简摘要，省上下文）。含队列元数据、子任务 id/status/截断后的 message、各状态计数。完整子任务（含 result/error/conversationId/时间等）请用 batch_task_get(queue_id)。",
 		ShortDescription: "列出批量任务队列",
 		InputSchema: map[string]interface{}{
 			"type": "object",
@@ -77,8 +77,15 @@ func RegisterBatchTaskMCPTools(mcpServer *mcp.Server, h *AgentHandler, logger *z
 		if totalPages == 0 {
 			totalPages = 1
 		}
+		slim := make([]batchTaskQueueMCPListItem, 0, len(queues))
+		for _, q := range queues {
+			if q == nil {
+				continue
+			}
+			slim = append(slim, toBatchTaskQueueMCPListItem(q))
+		}
 		payload := map[string]interface{}{
-			"queues":      queues,
+			"queues":      slim,
 			"total":       total,
 			"page":        page,
 			"page_size":   pageSize,
@@ -450,6 +457,97 @@ agent_mode: single（默认）或 multi（需系统启用多代理）。schedule
 	})
 
 	logger.Info("批量任务 MCP 工具已注册", zap.Int("count", 10))
+}
+
+// --- batch_task_list 精简结构（避免把每条子任务的 result 等大段文本塞进列表上下文） ---
+
+const mcpBatchListTaskMessageMaxRunes = 160
+
+// batchTaskMCPListSummary 列表中的子任务摘要（完整字段用 batch_task_get）
+type batchTaskMCPListSummary struct {
+	ID      string `json:"id"`
+	Status  string `json:"status"`
+	Message string `json:"message,omitempty"`
+}
+
+// batchTaskQueueMCPListItem 列表中的队列摘要
+type batchTaskQueueMCPListItem struct {
+	ID                    string                    `json:"id"`
+	Title                 string                    `json:"title,omitempty"`
+	Role                  string                    `json:"role,omitempty"`
+	AgentMode             string                    `json:"agentMode"`
+	ScheduleMode          string                    `json:"scheduleMode"`
+	CronExpr              string                    `json:"cronExpr,omitempty"`
+	NextRunAt             *time.Time                `json:"nextRunAt,omitempty"`
+	ScheduleEnabled       bool                      `json:"scheduleEnabled"`
+	LastScheduleTriggerAt *time.Time                `json:"lastScheduleTriggerAt,omitempty"`
+	Status                string                    `json:"status"`
+	CreatedAt             time.Time                 `json:"createdAt"`
+	StartedAt             *time.Time                `json:"startedAt,omitempty"`
+	CompletedAt           *time.Time                `json:"completedAt,omitempty"`
+	CurrentIndex          int                       `json:"currentIndex"`
+	TaskTotal             int                       `json:"task_total"`
+	TaskCounts            map[string]int            `json:"task_counts"`
+	Tasks                 []batchTaskMCPListSummary `json:"tasks"`
+}
+
+func truncateStringRunes(s string, maxRunes int) string {
+	if maxRunes <= 0 {
+		return ""
+	}
+	n := 0
+	for i := range s {
+		if n == maxRunes {
+			out := strings.TrimSpace(s[:i])
+			if out == "" {
+				return "…"
+			}
+			return out + "…"
+		}
+		n++
+	}
+	return s
+}
+
+func toBatchTaskQueueMCPListItem(q *BatchTaskQueue) batchTaskQueueMCPListItem {
+	counts := map[string]int{
+		"pending":   0,
+		"running":   0,
+		"completed": 0,
+		"failed":    0,
+		"cancelled": 0,
+	}
+	tasks := make([]batchTaskMCPListSummary, 0, len(q.Tasks))
+	for _, t := range q.Tasks {
+		if t == nil {
+			continue
+		}
+		counts[t.Status]++
+		tasks = append(tasks, batchTaskMCPListSummary{
+			ID:      t.ID,
+			Status:  t.Status,
+			Message: truncateStringRunes(t.Message, mcpBatchListTaskMessageMaxRunes),
+		})
+	}
+	return batchTaskQueueMCPListItem{
+		ID:                    q.ID,
+		Title:                 q.Title,
+		Role:                  q.Role,
+		AgentMode:             q.AgentMode,
+		ScheduleMode:          q.ScheduleMode,
+		CronExpr:              q.CronExpr,
+		NextRunAt:             q.NextRunAt,
+		ScheduleEnabled:       q.ScheduleEnabled,
+		LastScheduleTriggerAt: q.LastScheduleTriggerAt,
+		Status:                q.Status,
+		CreatedAt:             q.CreatedAt,
+		StartedAt:             q.StartedAt,
+		CompletedAt:           q.CompletedAt,
+		CurrentIndex:          q.CurrentIndex,
+		TaskTotal:             len(tasks),
+		TaskCounts:            counts,
+		Tasks:                 tasks,
+	}
 }
 
 func batchMCPTextResult(text string, isErr bool) *mcp.ToolResult {
