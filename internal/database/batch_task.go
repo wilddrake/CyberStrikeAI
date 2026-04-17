@@ -489,6 +489,18 @@ func (db *DB) AddBatchTask(queueID, taskID, message string) error {
 	return nil
 }
 
+// CancelPendingBatchTasks 批量取消队列中所有 pending 状态的任务（单条 SQL）
+func (db *DB) CancelPendingBatchTasks(queueID string, completedAt time.Time) error {
+	_, err := db.Exec(
+		"UPDATE batch_tasks SET status = ?, completed_at = ? WHERE queue_id = ? AND status = ?",
+		"cancelled", completedAt, queueID, "pending",
+	)
+	if err != nil {
+		return fmt.Errorf("批量取消 pending 任务失败: %w", err)
+	}
+	return nil
+}
+
 // DeleteBatchTask 删除批量任务
 func (db *DB) DeleteBatchTask(queueID, taskID string) error {
 	_, err := db.Exec(

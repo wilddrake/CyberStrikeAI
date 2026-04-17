@@ -2062,7 +2062,7 @@ func (h *AgentHandler) batchQueueSchedulerLoop() {
 	ticker := time.NewTicker(20 * time.Second)
 	defer ticker.Stop()
 	for range ticker.C {
-		queues := h.batchTaskManager.GetAllQueues()
+		queues := h.batchTaskManager.GetLoadedQueues()
 		now := time.Now()
 		for _, queue := range queues {
 			if queue == nil || queue.ScheduleMode != "cron" || !queue.ScheduleEnabled || queue.Status == "cancelled" || queue.Status == "running" || queue.Status == "paused" {
