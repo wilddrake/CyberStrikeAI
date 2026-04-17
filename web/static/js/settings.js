@@ -102,6 +102,10 @@ async function loadConfig(loadTools = true) {
         currentConfig = await response.json();
         
         // 填充OpenAI配置
+        const providerEl = document.getElementById('openai-provider');
+        if (providerEl) {
+            providerEl.value = currentConfig.openai.provider || 'openai';
+        }
         document.getElementById('openai-api-key').value = currentConfig.openai.api_key || '';
         document.getElementById('openai-base-url').value = currentConfig.openai.base_url || '';
         document.getElementById('openai-model').value = currentConfig.openai.model || '';
@@ -753,6 +757,7 @@ async function applySettings() {
         });
         
         // 验证必填字段
+        const provider = document.getElementById('openai-provider')?.value || 'openai';
         const apiKey = document.getElementById('openai-api-key').value.trim();
         const baseUrl = document.getElementById('openai-base-url').value.trim();
         const model = document.getElementById('openai-model').value.trim();
@@ -821,6 +826,7 @@ async function applySettings() {
         const wecomAgentIdVal = document.getElementById('robot-wecom-agent-id')?.value.trim();
         const config = {
             openai: {
+                provider: provider,
                 api_key: apiKey,
                 base_url: baseUrl,
                 model: model
@@ -981,6 +987,7 @@ async function testOpenAIConnection() {
     const btn = document.getElementById('test-openai-btn');
     const resultEl = document.getElementById('test-openai-result');
 
+    const provider = document.getElementById('openai-provider')?.value || 'openai';
     const baseUrl = document.getElementById('openai-base-url').value.trim();
     const apiKey = document.getElementById('openai-api-key').value.trim();
     const model = document.getElementById('openai-model').value.trim();
@@ -1001,6 +1008,7 @@ async function testOpenAIConnection() {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
+                provider: provider,
                 base_url: baseUrl,
                 api_key: apiKey,
                 model: model

@@ -64,6 +64,9 @@ func (c *Client) ChatCompletion(ctx context.Context, payload interface{}, out in
 	if strings.TrimSpace(c.config.APIKey) == "" {
 		return fmt.Errorf("openai api key is empty")
 	}
+	if c.isClaude() {
+		return c.claudeChatCompletion(ctx, payload, out)
+	}
 
 	baseURL := strings.TrimSuffix(c.config.BaseURL, "/")
 	if baseURL == "" {
@@ -155,6 +158,9 @@ func (c *Client) ChatCompletionStream(ctx context.Context, payload interface{}, 
 	}
 	if strings.TrimSpace(c.config.APIKey) == "" {
 		return "", fmt.Errorf("openai api key is empty")
+	}
+	if c.isClaude() {
+		return c.claudeChatCompletionStream(ctx, payload, onDelta)
 	}
 
 	baseURL := strings.TrimSuffix(c.config.BaseURL, "/")
@@ -293,6 +299,9 @@ func (c *Client) ChatCompletionStreamWithToolCalls(
 	}
 	if strings.TrimSpace(c.config.APIKey) == "" {
 		return "", nil, "", fmt.Errorf("openai api key is empty")
+	}
+	if c.isClaude() {
+		return c.claudeChatCompletionStreamWithToolCalls(ctx, payload, onContentDelta)
 	}
 
 	baseURL := strings.TrimSuffix(c.config.BaseURL, "/")

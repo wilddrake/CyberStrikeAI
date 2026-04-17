@@ -19,6 +19,7 @@ import (
 	"cyberstrike-ai/internal/agents"
 	"cyberstrike-ai/internal/config"
 	"cyberstrike-ai/internal/einomcp"
+	"cyberstrike-ai/internal/openai"
 
 	einoopenai "github.com/cloudwego/eino-ext/components/model/openai"
 	"github.com/cloudwego/eino/adk"
@@ -140,6 +141,9 @@ func RunDeepAgent(
 			ResponseHeaderTimeout: 60 * time.Minute,
 		},
 	}
+
+	// 若配置为 Claude provider，注入自动桥接 transport，对 Eino 透明走 Anthropic Messages API
+	httpClient = openai.NewEinoHTTPClient(&appCfg.OpenAI, httpClient)
 
 	baseModelCfg := &einoopenai.ChatModelConfig{
 		APIKey:     appCfg.OpenAI.APIKey,

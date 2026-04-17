@@ -3,9 +3,7 @@ package handler
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -18,6 +16,7 @@ import (
 	"cyberstrike-ai/internal/config"
 	"cyberstrike-ai/internal/knowledge"
 	"cyberstrike-ai/internal/mcp"
+	"cyberstrike-ai/internal/openai"
 	"cyberstrike-ai/internal/security"
 
 	"github.com/gin-gonic/gin"
@@ -795,9 +794,10 @@ func (h *ConfigHandler) UpdateConfig(c *gin.Context) {
 
 // TestOpenAIRequest 测试OpenAI连接请求
 type TestOpenAIRequest struct {
-	BaseURL string `json:"base_url"`
-	APIKey  string `json:"api_key"`
-	Model   string `json:"model"`
+	Provider string `json:"provider"`
+	BaseURL  string `json:"base_url"`
+	APIKey   string `json:"api_key"`
+	Model    string `json:"model"`
 }
 
 // TestOpenAI 测试OpenAI API连接是否可用
@@ -819,7 +819,11 @@ func (h *ConfigHandler) TestOpenAI(c *gin.Context) {
 
 	baseURL := strings.TrimSuffix(strings.TrimSpace(req.BaseURL), "/")
 	if baseURL == "" {
-		baseURL = "https://api.openai.com/v1"
+		if strings.EqualFold(strings.TrimSpace(req.Provider), "claude") {
+			baseURL = "https://api.anthropic.com"
+		} else {
+			baseURL = "https://api.openai.com/v1"
+		}
 	}
 
 	// 构造一个最小的 chat completion 请求
@@ -831,57 +835,19 @@ func (h *ConfigHandler) TestOpenAI(c *gin.Context) {
 		"max_tokens": 5,
 	}
 
-	body, err := json.Marshal(payload)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "构造请求失败"})
-		return
+	// 使用内部 openai Client 进行测试，若 provider 为 claude 会自动走桥接层
+	tmpCfg := &config.OpenAIConfig{
+		Provider: req.Provider,
+		BaseURL:  baseURL,
+		APIKey:   strings.TrimSpace(req.APIKey),
+		Model:    req.Model,
 	}
+	client := openai.NewClient(tmpCfg, nil, h.logger)
 
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 30*time.Second)
 	defer cancel()
 
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/chat/completions", bytes.NewReader(body))
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "构造HTTP请求失败: " + err.Error()})
-		return
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Authorization", "Bearer "+strings.TrimSpace(req.APIKey))
-
 	start := time.Now()
-	resp, err := http.DefaultClient.Do(httpReq)
-	latency := time.Since(start)
-	if err != nil {
-		c.JSON(http.StatusOK, gin.H{
-			"success": false,
-			"error":   "连接失败: " + err.Error(),
-		})
-		return
-	}
-	defer resp.Body.Close()
-
-	respBody, _ := io.ReadAll(resp.Body)
-
-	if resp.StatusCode != http.StatusOK {
-		// 尝试提取错误信息
-		var errResp struct {
-			Error struct {
-				Message string `json:"message"`
-			} `json:"error"`
-		}
-		errMsg := string(respBody)
-		if json.Unmarshal(respBody, &errResp) == nil && errResp.Error.Message != "" {
-			errMsg = errResp.Error.Message
-		}
-		c.JSON(http.StatusOK, gin.H{
-			"success":     false,
-			"error":       fmt.Sprintf("API 返回错误 (HTTP %d): %s", resp.StatusCode, errMsg),
-			"status_code": resp.StatusCode,
-		})
-		return
-	}
-
-	// 解析响应并严格验证是否为有效的 chat completion 响应
 	var chatResp struct {
 		ID      string `json:"id"`
 		Object  string `json:"object"`
@@ -893,10 +859,21 @@ func (h *ConfigHandler) TestOpenAI(c *gin.Context) {
 			} `json:"message"`
 		} `json:"choices"`
 	}
-	if err := json.Unmarshal(respBody, &chatResp); err != nil {
+	err := client.ChatCompletion(ctx, payload, &chatResp)
+	latency := time.Since(start)
+
+	if err != nil {
+		if apiErr, ok := err.(*openai.APIError); ok {
+			c.JSON(http.StatusOK, gin.H{
+				"success":     false,
+				"error":       fmt.Sprintf("API 返回错误 (HTTP %d): %s", apiErr.StatusCode, apiErr.Body),
+				"status_code": apiErr.StatusCode,
+			})
+			return
+		}
 		c.JSON(http.StatusOK, gin.H{
 			"success": false,
-			"error":   "API 响应不是有效的 JSON，请检查 Base URL 是否正确",
+			"error":   "连接失败: " + err.Error(),
 		})
 		return
 	}
@@ -905,14 +882,14 @@ func (h *ConfigHandler) TestOpenAI(c *gin.Context) {
 	if len(chatResp.Choices) == 0 {
 		c.JSON(http.StatusOK, gin.H{
 			"success": false,
-			"error":   "API 响应缺少 choices 字段，请检查 Base URL 路径是否正确（通常以 /v1 结尾）",
+			"error":   "API 响应缺少 choices 字段，请检查 Base URL 路径是否正确",
 		})
 		return
 	}
 	if chatResp.ID == "" && chatResp.Model == "" {
 		c.JSON(http.StatusOK, gin.H{
 			"success": false,
-			"error":   "API 响应格式不符合 OpenAI 规范，请检查 Base URL 是否正确",
+			"error":   "API 响应格式不符合预期，请检查 Base URL 是否正确",
 		})
 		return
 	}
@@ -1272,6 +1249,9 @@ func updateMCPConfig(doc *yaml.Node, cfg config.MCPConfig) {
 func updateOpenAIConfig(doc *yaml.Node, cfg config.OpenAIConfig) {
 	root := doc.Content[0]
 	openaiNode := ensureMap(root, "openai")
+	if cfg.Provider != "" {
+		setStringInMap(openaiNode, "provider", cfg.Provider)
+	}
 	setStringInMap(openaiNode, "api_key", cfg.APIKey)
 	setStringInMap(openaiNode, "base_url", cfg.BaseURL)
 	setStringInMap(openaiNode, "model", cfg.Model)
