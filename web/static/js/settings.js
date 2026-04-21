@@ -501,26 +501,32 @@ function renderToolsList() {
             external_mcp: tool.external_mcp || ''
         };
         
-        // 外部工具标签，显示来源信息
+        // 外部工具标签，显示来源信息（可点击跳转到对应 MCP 卡片）
         let externalBadge = '';
         if (toolState.is_external || tool.is_external) {
             const externalMcpName = toolState.external_mcp || tool.external_mcp || '';
             const badgeText = externalMcpName ? (typeof window.t === 'function' ? window.t('mcp.externalFrom', { name: escapeHtml(externalMcpName) }) : `外部 (${escapeHtml(externalMcpName)})`) : (typeof window.t === 'function' ? window.t('mcp.externalBadge') : '外部');
-            const badgeTitle = externalMcpName ? (typeof window.t === 'function' ? window.t('mcp.externalToolFrom', { name: escapeHtml(externalMcpName) }) : `外部MCP工具 - 来源：${escapeHtml(externalMcpName)}`) : (typeof window.t === 'function' ? window.t('mcp.externalBadge') : '外部MCP工具');
-            externalBadge = `<span class="external-tool-badge" title="${badgeTitle}">${badgeText}</span>`;
+            const badgeTitle = externalMcpName ? (typeof window.t === 'function' ? window.t('mcp.externalToolFrom', { name: escapeHtml(externalMcpName) }) + ' — 点击跳转' : `外部MCP工具 - 来源：${escapeHtml(externalMcpName)} — 点击跳转`) : (typeof window.t === 'function' ? window.t('mcp.externalBadge') : '外部MCP工具');
+            if (externalMcpName) {
+                externalBadge = `<span class="external-tool-badge clickable" onclick="scrollToExternalMCP('${escapeHtml(externalMcpName)}', event)" title="${badgeTitle}">${badgeText}</span>`;
+            } else {
+                externalBadge = `<span class="external-tool-badge" title="${badgeTitle}">${badgeText}</span>`;
+            }
         }
-        
+
         // 生成唯一的checkbox id，使用工具唯一标识符
         const checkboxId = `tool-${escapeHtml(toolKey).replace(/::/g, '--')}`;
-        
+
         toolItem.innerHTML = `
             <input type="checkbox" id="${checkboxId}" ${toolState.enabled ? 'checked' : ''} ${toolState.is_external || tool.is_external ? 'data-external="true"' : ''} onchange="handleToolCheckboxChange('${escapeHtml(toolKey)}', this.checked)" />
-            <div class="tool-item-info">
+            <div class="tool-item-info" onclick="toggleToolDetail(this, '${escapeHtml(toolKey)}', ${tool.is_external ? 'true' : 'false'}, '${escapeHtml(tool.external_mcp || '')}', event)">
                 <div class="tool-item-name">
                     ${escapeHtml(tool.name)}
                     ${externalBadge}
+                    <span class="tool-expand-icon">▶</span>
                 </div>
                 <div class="tool-item-desc">${escapeHtml(tool.description || (typeof window.t === 'function' ? window.t('mcp.noDescription') : '无描述'))}</div>
+                <div class="tool-item-detail" style="display:none"></div>
             </div>
         `;
         listContainer.appendChild(toolItem);
@@ -532,6 +538,103 @@ function renderToolsList() {
     
     // 更新统计
     updateToolsStats();
+}
+
+// 展开/折叠工具详情面板（按需从后端加载 schema）
+function toggleToolDetail(infoEl, toolKey, isExternal, externalMcp, event) {
+    // 点击 checkbox 或外部工具徽章时不展开
+    if (event.target.tagName === 'INPUT' || event.target.closest('.external-tool-badge')) return;
+
+    const detail = infoEl.querySelector('.tool-item-detail');
+    const icon = infoEl.querySelector('.tool-expand-icon');
+    if (!detail) return;
+
+    const isOpen = detail.style.display !== 'none';
+    detail.style.display = isOpen ? 'none' : 'block';
+    if (icon) icon.textContent = isOpen ? '▶' : '▼';
+
+    // 首次展开时从后端按需加载
+    if (!isOpen && !detail.dataset.rendered) {
+        detail.dataset.rendered = '1';
+        const descEl = infoEl.querySelector('.tool-item-desc');
+        const fullDesc = descEl ? descEl.textContent : '';
+
+        // 先显示加载状态
+        detail.innerHTML = `
+            <div class="tool-detail-desc">${escapeHtml(fullDesc)}</div>
+            <div class="tool-detail-section-title">参数定义</div>
+            <div style="color:var(--text-tertiary);font-size:0.8125rem;padding:4px 0;">加载中...</div>
+        `;
+
+        // 解析工具名（外部工具 toolKey 格式为 mcpName::toolName）
+        let apiToolName = toolKey;
+        let query = '';
+        if (isExternal && externalMcp) {
+            const parts = toolKey.split('::');
+            apiToolName = parts.length > 1 ? parts[1] : toolKey;
+            query = '?external_mcp=' + encodeURIComponent(externalMcp);
+        }
+
+        apiFetch(`/api/config/tools/${encodeURIComponent(apiToolName)}/schema${query}`)
+            .then(r => r.json())
+            .then(data => {
+                const schema = data.input_schema;
+                let schemaHTML = '';
+                if (schema) {
+                    const props = schema.properties || {};
+                    const required = schema.required || [];
+                    const paramKeys = Object.keys(props);
+                    if (paramKeys.length > 0) {
+                        schemaHTML = `<table class="tool-schema-table">
+                            <thead><tr><th>参数</th><th>类型</th><th>必填</th><th>说明</th></tr></thead>
+                            <tbody>`;
+                        paramKeys.forEach(key => {
+                            const p = props[key] || {};
+                            const type = p.type || (p.enum ? 'enum' : '—');
+                            const isReq = required.includes(key);
+                            const desc = p.description || '';
+                            schemaHTML += `<tr>
+                                <td><code>${escapeHtml(key)}</code></td>
+                                <td>${escapeHtml(String(type))}</td>
+                                <td>${isReq ? '<span style="color:#28a745">✔</span>' : ''}</td>
+                                <td>${escapeHtml(desc)}</td>
+                            </tr>`;
+                        });
+                        schemaHTML += '</tbody></table>';
+                    }
+                }
+                if (!schemaHTML) {
+                    schemaHTML = '<div style="color:var(--text-tertiary);font-size:0.8125rem;padding:4px 0;">无参数定义</div>';
+                }
+                detail.innerHTML = `
+                    <div class="tool-detail-desc">${escapeHtml(fullDesc)}</div>
+                    <div class="tool-detail-section-title">参数定义</div>
+                    ${schemaHTML}
+                `;
+            })
+            .catch(() => {
+                detail.innerHTML = `
+                    <div class="tool-detail-desc">${escapeHtml(fullDesc)}</div>
+                    <div class="tool-detail-section-title">参数定义</div>
+                    <div style="color:var(--text-tertiary);font-size:0.8125rem;padding:4px 0;">加载失败</div>
+                `;
+            });
+    }
+}
+
+// 点击外部工具徽章跳转到对应的外部 MCP 卡片
+function scrollToExternalMCP(mcpName, event) {
+    event.stopPropagation();
+    const items = document.querySelectorAll('.external-mcp-item');
+    for (const item of items) {
+        const h4 = item.querySelector('h4');
+        if (h4 && h4.textContent.includes(mcpName)) {
+            item.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            item.classList.add('highlight');
+            setTimeout(() => item.classList.remove('highlight'), 2000);
+            return;
+        }
+    }
 }
 
 // 渲染工具列表分页控件
@@ -1382,7 +1485,7 @@ function renderExternalMCPList(servers) {
                           status === 'connecting' ? statusT('mcp.connecting') :
                           status === 'error' ? statusT('mcp.connectionFailed') :
                           status === 'disabled' ? statusT('mcp.disabled') : statusT('mcp.disconnected');
-        const transport = server.config.transport || (server.config.command ? 'stdio' : 'http');
+        const transport = server.config.type || server.config.transport || (server.config.command ? 'stdio' : 'http');
         const transportIcon = transport === 'stdio' ? '⚙️' : '🌐';
         
         html += `
@@ -1393,11 +1496,11 @@ function renderExternalMCPList(servers) {
                         <span class="external-mcp-status ${statusClass}">${statusText}</span>
                     </div>
                     <div class="external-mcp-item-actions">
-                        ${status === 'connected' || status === 'disconnected' || status === 'error' ? 
+                        ${status === 'connected' || status === 'disconnected' || status === 'error' || status === 'disabled' ?
                             `<button class="btn-small" id="btn-toggle-${escapeHtml(name)}" onclick="toggleExternalMCP('${escapeHtml(name)}', '${status}')" title="${status === 'connected' ? statusT('mcp.stopConnection') : statusT('mcp.startConnection')}">
                                 ${status === 'connected' ? '⏸ ' + statusT('mcp.stop') : '▶ ' + statusT('mcp.start')}
-                            </button>` : 
-                            status === 'connecting' ? 
+                            </button>` :
+                            status === 'connecting' ?
                             `<button class="btn-small" id="btn-toggle-${escapeHtml(name)}" disabled style="opacity: 0.6; cursor: not-allowed;">
                                 ⏳ ${statusT('mcp.connecting')}
                             </button>` : ''}
@@ -1552,24 +1655,29 @@ function formatExternalMCPJSON() {
 
 // 加载示例
 function loadExternalMCPExample() {
-    const desc = (typeof window.t === 'function' ? window.t('externalMcpModal.exampleDescription') : '示例描述');
     const example = {
-        "hexstrike-ai": {
+        "my-stdio-server": {
             command: "python3",
             args: [
-                "/path/to/script.py",
-                "--server",
-                "http://example.com"
+                "${HOME}/mcp-servers/main.py",
+                "--port",
+                "${MCP_PORT:-3000}"
             ],
-            description: desc,
+            env: {
+                "API_KEY": "${API_KEY}",
+                "LOG_LEVEL": "${LOG_LEVEL:-INFO}"
+            },
             timeout: 300
         },
-        "cyberstrike-ai-http": {
-            transport: "http",
-            url: "http://127.0.0.1:8081/mcp"
+        "my-http-server": {
+            type: "http",
+            url: "https://mcp.example.com/mcp",
+            headers: {
+                "Authorization": "Bearer ${MCP_TOKEN}"
+            }
         },
-        "cyberstrike-ai-sse": {
-            transport: "sse",
+        "my-sse-server": {
+            type: "sse",
             url: "http://127.0.0.1:8081/mcp/sse"
         }
     };
@@ -1642,8 +1750,8 @@ async function saveExternalMCP() {
         // 移除 external_mcp_enable 字段（由按钮控制，但保留 enabled/disabled 用于向后兼容）
         delete config.external_mcp_enable;
         
-        // 验证配置内容
-        const transport = config.transport || (config.command ? 'stdio' : config.url ? 'http' : '');
+        // 验证配置内容（同时支持官方 type 字段和旧版 transport 字段）
+        const transport = config.type || config.transport || (config.command ? 'stdio' : config.url ? 'http' : '');
         if (!transport) {
             errorDiv.textContent = t('mcp.configNeedCommand', { name: name });
             errorDiv.style.display = 'block';

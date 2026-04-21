@@ -3965,7 +3965,7 @@ header {
 
 .tool-item {
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     gap: 12px;
     padding: 10px 12px;
     border-radius: 6px;
@@ -3980,8 +3980,10 @@ header {
 .tool-item input[type="checkbox"] {
     width: 18px;
     height: 18px;
+    margin-top: 2px;
     cursor: pointer;
     accent-color: var(--accent-color);
+    flex-shrink: 0;
 }
 
 .tool-item-info {
@@ -4019,6 +4021,93 @@ header {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+}
+
+/* 展开图标 */
+.tool-expand-icon {
+    font-size: 0.625rem;
+    color: var(--text-tertiary);
+    transition: transform 0.2s;
+    user-select: none;
+    flex-shrink: 0;
+}
+
+/* 展开后的详情面板 */
+.tool-item-detail {
+    margin-top: 8px;
+    padding: 12px;
+    background: var(--bg-tertiary);
+    border-radius: 8px;
+    border: 1px solid var(--border-color);
+    font-size: 0.8125rem;
+}
+
+.tool-detail-desc {
+    color: var(--text-secondary);
+    line-height: 1.6;
+    margin-bottom: 8px;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.tool-detail-section-title {
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--text-tertiary);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 6px;
+}
+
+/* 参数表格 */
+.tool-schema-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.8125rem;
+}
+
+.tool-schema-table th {
+    text-align: left;
+    padding: 6px 10px;
+    background: var(--bg-secondary);
+    color: var(--text-secondary);
+    font-size: 0.75rem;
+    font-weight: 600;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.tool-schema-table td {
+    padding: 6px 10px;
+    border-bottom: 1px solid var(--border-color);
+    color: var(--text-primary);
+    vertical-align: top;
+}
+
+.tool-schema-table code {
+    font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+    font-size: 0.8125rem;
+    color: var(--accent-color);
+}
+
+/* 可点击的外部工具徽章 */
+.external-tool-badge.clickable {
+    cursor: pointer;
+    transition: background 0.2s, border-color 0.2s;
+}
+
+.external-tool-badge.clickable:hover {
+    background: rgba(255, 152, 0, 0.25);
+    border-color: rgba(255, 152, 0, 0.6);
+}
+
+/* 外部 MCP 卡片高亮动画 */
+.external-mcp-item.highlight {
+    animation: mcpHighlight 2s ease-out;
+}
+
+@keyframes mcpHighlight {
+    0% { box-shadow: 0 0 0 3px var(--accent-color); border-color: var(--accent-color); }
+    100% { box-shadow: none; border-color: var(--border-color); }
 }
 
 .tool-item.hidden {
