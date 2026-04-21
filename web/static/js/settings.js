@@ -519,7 +519,7 @@ function renderToolsList() {
 
         toolItem.innerHTML = `
             <input type="checkbox" id="${checkboxId}" ${toolState.enabled ? 'checked' : ''} ${toolState.is_external || tool.is_external ? 'data-external="true"' : ''} onchange="handleToolCheckboxChange('${escapeHtml(toolKey)}', this.checked)" />
-            <div class="tool-item-info" onclick="toggleToolDetail(this, '${escapeHtml(toolKey)}', ${tool.is_external ? 'true' : 'false'}, '${escapeHtml(tool.external_mcp || '')}', event)">
+            <div class="tool-item-info">
                 <div class="tool-item-name">
                     ${escapeHtml(tool.name)}
                     ${externalBadge}
@@ -529,6 +529,11 @@ function renderToolsList() {
                 <div class="tool-item-detail" style="display:none"></div>
             </div>
         `;
+        toolItem.addEventListener('click', function (event) {
+            const infoEl = toolItem.querySelector('.tool-item-info');
+            if (!infoEl) return;
+            toggleToolDetail(infoEl, toolKey, !!tool.is_external, tool.external_mcp || '', event);
+        });
         listContainer.appendChild(toolItem);
     });
     
@@ -543,14 +548,16 @@ function renderToolsList() {
 // 展开/折叠工具详情面板（按需从后端加载 schema）
 function toggleToolDetail(infoEl, toolKey, isExternal, externalMcp, event) {
     // 点击 checkbox 或外部工具徽章时不展开
-    if (event.target.tagName === 'INPUT' || event.target.closest('.external-tool-badge')) return;
+    if (event && (event.target.tagName === 'INPUT' || event.target.closest('.external-tool-badge'))) return;
 
     const detail = infoEl.querySelector('.tool-item-detail');
     const icon = infoEl.querySelector('.tool-expand-icon');
     if (!detail) return;
 
-    const isOpen = detail.style.display !== 'none';
+    // 使用 data-open 作为主状态，避免仅依赖 style.display 带来的首击偶发判定不一致
+    const isOpen = detail.dataset.open === '1';
     detail.style.display = isOpen ? 'none' : 'block';
+    detail.dataset.open = isOpen ? '0' : '1';
     if (icon) icon.textContent = isOpen ? '▶' : '▼';
 
     // 首次展开时从后端按需加载
@@ -1466,12 +1473,15 @@ async function pollExternalMCPToolCount(name, maxAttempts = 10) {
 function renderExternalMCPList(servers) {
     const list = document.getElementById('external-mcp-list');
     if (!list) return;
+    const layout = document.querySelector('.mcp-management-layout');
     
     if (Object.keys(servers).length === 0) {
+        if (layout) layout.classList.add('external-empty');
         const emptyT = typeof window.t === 'function' ? window.t : (k) => k;
         list.innerHTML = '<div class="empty">📋 ' + emptyT('mcp.noExternalMCP') + '<br><span style="font-size: 0.875rem; margin-top: 8px; display: block;">' + emptyT('mcp.clickToAddExternal') + '</span></div>';
         return;
     }
+    if (layout) layout.classList.remove('external-empty');
     
     let html = '<div class="external-mcp-items">';
     for (const [name, server] of Object.entries(servers)) {

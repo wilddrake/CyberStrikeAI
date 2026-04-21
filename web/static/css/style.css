@@ -3590,6 +3590,83 @@ header {
     margin-bottom: 32px;
 }
 
+.mcp-management-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
+    gap: 16px;
+    align-items: stretch;
+    height: calc(100vh - 210px);
+    min-height: 520px;
+    max-height: calc(100vh - 210px);
+}
+
+.mcp-management-panel {
+    margin-bottom: 0 !important;
+    padding: 14px 16px 16px;
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    background: var(--bg-primary);
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+}
+
+.mcp-tools-panel {
+    min-width: 0;
+    order: 2;
+}
+
+.mcp-external-panel {
+    min-width: 0;
+    order: 1;
+}
+
+.mcp-panel-body {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+}
+
+.mcp-tools-panel .tools-controls,
+.mcp-external-panel .external-mcp-controls {
+    flex: 1;
+    min-height: 0;
+}
+
+.mcp-tools-panel .tools-list {
+    flex: 1;
+    min-height: 0;
+    max-height: 100%;
+    overflow-y: auto;
+}
+
+.mcp-tools-panel .tools-list-items {
+    max-height: none;
+    overflow: visible;
+}
+
+.mcp-external-panel .external-mcp-list {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding-right: 4px;
+}
+
+.mcp-external-panel .external-mcp-controls {
+    gap: 12px;
+}
+
+/* MCP 双栏内工具操作条允许换行，避免面板内溢出 */
+.mcp-tools-panel .tools-actions {
+    flex-wrap: wrap;
+    row-gap: 8px;
+}
+
+.mcp-tools-panel .search-box {
+    min-width: min(280px, 100%);
+}
+
 .settings-section:last-child {
     margin-bottom: 0;
 }
@@ -5396,6 +5473,23 @@ header {
 
 /* 响应式优化 */
 @media (max-width: 768px) {
+    .mcp-management-layout {
+        grid-template-columns: 1fr;
+        height: auto;
+        min-height: auto;
+        max-height: none;
+    }
+
+    .mcp-management-panel {
+        min-height: 0;
+    }
+
+    .mcp-tools-panel .tools-list,
+    .mcp-external-panel .external-mcp-list {
+        min-height: 200px;
+        max-height: 52vh;
+    }
+
     .tools-actions {
         gap: 6px;
     }

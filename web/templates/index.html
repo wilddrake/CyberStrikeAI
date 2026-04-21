@@ -735,17 +735,17 @@
                         <h2 data-i18n="mcp.managementTitle">MCP 管理</h2>
                         <div class="page-header-actions">
                             <button class="btn-secondary" onclick="loadExternalMCPs()"><span data-i18n="common.refresh">刷新</span></button>
-                            <button class="btn-primary" onclick="showAddExternalMCPModal()" data-i18n="mcp.addExternalMCP">添加外部MCP</button>
                         </div>
                     </div>
                     <div class="page-content">
+                        <div class="mcp-management-layout">
                         <!-- MCP工具配置 -->
-                        <div class="settings-section" style="margin-bottom: 32px;">
+                        <div class="settings-section mcp-management-panel mcp-tools-panel" style="margin-bottom: 32px;">
                             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
                                 <h3 style="margin: 0;" data-i18n="mcp.toolConfig">MCP 工具配置</h3>
                                 <button class="btn-primary" onclick="saveToolsConfig()" data-i18n="mcp.saveToolConfig">保存工具配置</button>
                             </div>
-                            <div class="tools-controls">
+                            <div class="tools-controls mcp-panel-body">
                                 <div class="tools-actions">
                                     <button class="btn-secondary" onclick="selectAllTools()" data-i18n="mcp.selectAll">全选</button>
                                     <button class="btn-secondary" onclick="deselectAllTools()" data-i18n="mcp.deselectAll">全不选</button>
@@ -765,14 +765,18 @@
                         </div>
 
                         <!-- 外部MCP配置 -->
-                        <div class="settings-section">
-                            <h3 data-i18n="mcp.externalConfig">外部 MCP 配置</h3>
-                            <div class="external-mcp-controls">
+                        <div class="settings-section mcp-management-panel mcp-external-panel">
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+                                <h3 style="margin: 0;" data-i18n="mcp.externalConfig">外部 MCP 配置</h3>
+                                <button class="btn-primary" onclick="showAddExternalMCPModal()" data-i18n="mcp.addExternalMCP">添加外部MCP</button>
+                            </div>
+                            <div class="external-mcp-controls mcp-panel-body">
                                 <div class="external-mcp-actions">
                                     <div class="external-mcp-stats" id="external-mcp-stats"></div>
                                 </div>
                                 <div id="external-mcp-list" class="external-mcp-list"></div>
                             </div>
+                        </div>
                         </div>
                     </div>
                 </div>
