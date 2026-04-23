@@ -115,7 +115,9 @@ type AgentHandler struct {
 	db               *database.DB
 	logger           *zap.Logger
 	tasks            *AgentTaskManager
+	taskEventBus     *TaskEventBus // 镜像 SSE 事件，供刷新后订阅同一运行中任务
 	batchTaskManager *BatchTaskManager
+	hitlManager      *HITLManager
 	config           *config.Config // 配置引用，用于获取角色信息
 	knowledgeManager interface {    // 知识库管理器接口
 		LogRetrieval(conversationID, messageID, query, riskType string, retrievedItems []string) error
@@ -124,6 +126,13 @@ type AgentHandler struct {
 	batchCronParser   cron.Parser
 	batchRunnerMu     sync.Mutex
 	batchRunning      map[string]struct{}
+	// hitlWhitelistSaver 侧栏「应用」HITL 时将会话增量白名单合并写入 config.yaml（可选）
+	hitlWhitelistSaver HitlToolWhitelistSaver
+}
+
+// HitlToolWhitelistSaver 合并 HITL 免审批工具到全局配置并落盘
+type HitlToolWhitelistSaver interface {
+	MergeHitlToolWhitelistIntoConfig(add []string) error
 }
 
 // NewAgentHandler 创建新的Agent处理器
@@ -136,15 +145,23 @@ func NewAgentHandler(agent *agent.Agent, db *database.DB, cfg *config.Config, lo
 		logger.Warn("从数据库加载批量任务队列失败", zap.Error(err))
 	}
 
+	bus := NewTaskEventBus()
+	tm := NewAgentTaskManager()
+	tm.SetTaskEventBus(bus)
 	handler := &AgentHandler{
 		agent:            agent,
 		db:               db,
 		logger:           logger,
-		tasks:            NewAgentTaskManager(),
+		tasks:            tm,
+		taskEventBus:     bus,
 		batchTaskManager: batchTaskManager,
 		config:           cfg,
+		hitlManager:      NewHITLManager(db, logger),
 		batchCronParser:  cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow | cron.Descriptor),
 		batchRunning:     make(map[string]struct{}),
+	}
+	if err := handler.hitlManager.EnsureSchema(); err != nil {
+		logger.Warn("初始化 HITL 表失败", zap.Error(err))
 	}
 	go handler.batchQueueSchedulerLoop()
 	return handler
@@ -162,6 +179,11 @@ func (h *AgentHandler) SetAgentsMarkdownDir(absDir string) {
 	h.agentsMarkdownDir = strings.TrimSpace(absDir)
 }
 
+// SetHitlToolWhitelistSaver 设置 HITL 白名单落盘（与 ConfigHandler 配合，避免循环引用用接口）
+func (h *AgentHandler) SetHitlToolWhitelistSaver(s HitlToolWhitelistSaver) {
+	h.hitlWhitelistSaver = s
+}
+
 // ChatAttachment 聊天附件（用户上传的文件）
 type ChatAttachment struct {
 	FileName   string `json:"fileName"`          // 展示用文件名
@@ -177,8 +199,16 @@ type ChatRequest struct {
 	Role                 string           `json:"role,omitempty"` // 角色名称
 	Attachments          []ChatAttachment `json:"attachments,omitempty"`
 	WebShellConnectionID string           `json:"webshellConnectionId,omitempty"` // WebShell 管理 - AI 助手：当前选中的连接 ID，仅使用 webshell_* 工具
+	Hitl                 *HITLRequest     `json:"hitl,omitempty"`
 	// Orchestration 仅对 /api/multi-agent、/api/multi-agent/stream：deep | plan_execute | supervisor；空则等同 deep。机器人/批量等无请求体时由服务端默认 deep。/api/eino-agent* 不使用此字段。
 	Orchestration string `json:"orchestration,omitempty"`
+}
+
+type HITLRequest struct {
+	Enabled        bool     `json:"enabled"`
+	Mode           string   `json:"mode,omitempty"`
+	SensitiveTools []string `json:"sensitiveTools,omitempty"`
+	TimeoutSeconds int      `json:"timeoutSeconds,omitempty"`
 }
 
 const (
@@ -462,6 +492,11 @@ func (h *AgentHandler) AgentLoop(c *gin.Context) {
 		}
 	}
 
+	h.activateHITLForConversation(conversationID, req.Hitl)
+	if h.hitlManager != nil {
+		defer h.hitlManager.DeactivateConversation(conversationID)
+	}
+
 	// 优先尝试从保存的ReAct数据恢复历史上下文
 	agentHistoryMessages, err := h.loadHistoryFromReActData(conversationID)
 	if err != nil {
@@ -566,8 +601,13 @@ func (h *AgentHandler) AgentLoop(c *gin.Context) {
 		return
 	}
 
+	baseCtx, cancelWithCause := context.WithCancelCause(c.Request.Context())
+	defer cancelWithCause(nil)
+	progressCallback := h.createProgressCallback(baseCtx, cancelWithCause, conversationID, "", nil)
+	baseCtx = h.injectReactHITLInterceptor(baseCtx, cancelWithCause, conversationID, "", nil)
+
 	// 执行Agent Loop，传入历史消息和对话ID（使用包含角色提示词的finalMessage和角色工具列表）
-	result, err := h.agent.AgentLoopWithProgress(c.Request.Context(), finalMessage, agentHistoryMessages, conversationID, nil, roleTools)
+	result, err := h.agent.AgentLoopWithProgress(baseCtx, finalMessage, agentHistoryMessages, conversationID, progressCallback, roleTools)
 	if err != nil {
 		h.logger.Error("Agent Loop执行失败", zap.Error(err))
 
@@ -661,7 +701,7 @@ func (h *AgentHandler) ProcessMessageForRobot(ctx context.Context, conversationI
 	if assistantMsg != nil {
 		assistantMessageID = assistantMsg.ID
 	}
-	progressCallback := h.createProgressCallback(conversationID, assistantMessageID, nil)
+	progressCallback := h.createProgressCallback(ctx, nil, conversationID, assistantMessageID, nil)
 
 	useRobotMulti := h.config != nil && h.config.MultiAgent.Enabled && h.config.MultiAgent.RobotUseMultiAgent
 	if useRobotMulti {
@@ -755,9 +795,41 @@ type StreamEvent struct {
 
 // createProgressCallback 创建进度回调函数，用于保存processDetails
 // sendEventFunc: 可选的流式事件发送函数，如果为nil则不发送流式事件
-func (h *AgentHandler) createProgressCallback(conversationID, assistantMessageID string, sendEventFunc func(eventType, message string, data interface{})) agent.ProgressCallback {
+func (h *AgentHandler) createProgressCallback(runCtx context.Context, cancelRun context.CancelCauseFunc, conversationID, assistantMessageID string, sendEventFunc func(eventType, message string, data interface{})) agent.ProgressCallback {
 	// 用于保存tool_call事件中的参数，以便在tool_result时使用
 	toolCallCache := make(map[string]map[string]interface{}) // toolCallId -> arguments
+	skillCallCache := make(map[string]string)                // toolCallId -> skillName
+	skillToolName := "skill"
+	if h.config != nil {
+		if customName := strings.TrimSpace(h.config.MultiAgent.EinoSkills.SkillToolName); customName != "" {
+			skillToolName = customName
+		}
+	}
+
+	extractSkillName := func(args map[string]interface{}) string {
+		if len(args) == 0 {
+			return ""
+		}
+		for _, key := range []string{"skill_name", "skillName", "name", "skill", "id", "skill_id", "skillId"} {
+			if v, ok := args[key]; ok {
+				switch vv := v.(type) {
+				case string:
+					if s := strings.TrimSpace(vv); s != "" {
+						return s
+					}
+				case map[string]interface{}:
+					for _, nestedKey := range []string{"name", "id", "skill_name", "skillId"} {
+						if nestedV, nestedOK := vv[nestedKey].(string); nestedOK {
+							if s := strings.TrimSpace(nestedV); s != "" {
+								return s
+							}
+						}
+					}
+				}
+			}
+		}
+		return ""
+	}
 
 	// thinking_stream_*：不逐条落库，按 streamId 聚合，在后续关键事件前补一条可持久化的 thinking
 	type thinkingBuf struct {
@@ -837,6 +909,16 @@ func (h *AgentHandler) createProgressCallback(conversationID, assistantMessageID
 					if toolCallId, ok := dataMap["toolCallId"].(string); ok && toolCallId != "" {
 						if argumentsObj, ok := dataMap["argumentsObj"].(map[string]interface{}); ok {
 							toolCallCache[toolCallId] = argumentsObj
+						}
+					}
+				}
+				if strings.EqualFold(strings.TrimSpace(toolName), skillToolName) {
+					toolCallID, _ := dataMap["toolCallId"].(string)
+					if toolCallID != "" {
+						if argumentsObj, ok := dataMap["argumentsObj"].(map[string]interface{}); ok {
+							if skillName := extractSkillName(argumentsObj); skillName != "" {
+								skillCallCache[toolCallID] = skillName
+							}
 						}
 					}
 				}
@@ -947,6 +1029,45 @@ func (h *AgentHandler) createProgressCallback(conversationID, assistantMessageID
 						}
 						if err := h.db.AddProcessDetail(assistantMessageID, conversationID, "knowledge_retrieval", fmt.Sprintf("检索知识: %s", query), retrievalData); err != nil {
 							h.logger.Warn("保存知识检索详情失败", zap.Error(err))
+						}
+					}
+				}
+			}
+		}
+
+		// 记录 skills 调用统计（tool_call + tool_result 关联）
+		if eventType == "tool_result" && h.db != nil {
+			if dataMap, ok := data.(map[string]interface{}); ok {
+				toolName, _ := dataMap["toolName"].(string)
+				if strings.EqualFold(strings.TrimSpace(toolName), skillToolName) {
+					toolCallID, _ := dataMap["toolCallId"].(string)
+					skillName := ""
+					if toolCallID != "" {
+						skillName = strings.TrimSpace(skillCallCache[toolCallID])
+						delete(skillCallCache, toolCallID)
+					}
+					if skillName == "" {
+						if argumentsObj, ok := dataMap["argumentsObj"].(map[string]interface{}); ok {
+							skillName = strings.TrimSpace(extractSkillName(argumentsObj))
+						}
+					}
+					if skillName != "" {
+						success, ok := dataMap["success"].(bool)
+						if !ok {
+							if isError, okErr := dataMap["isError"].(bool); okErr {
+								success = !isError
+							}
+						}
+						successCalls := 0
+						failedCalls := 0
+						if success {
+							successCalls = 1
+						} else {
+							failedCalls = 1
+						}
+						now := time.Now()
+						if err := h.db.UpdateSkillStats(skillName, 1, successCalls, failedCalls, &now); err != nil {
+							h.logger.Warn("更新Skills调用统计失败", zap.Error(err), zap.String("skill", skillName))
 						}
 					}
 				}
@@ -1108,6 +1229,7 @@ func (h *AgentHandler) AgentLoopStream(c *gin.Context) {
 	clientDisconnected := false
 	// 与 sseKeepalive 共用：禁止并发写 ResponseWriter，否则会破坏 chunked 编码（ERR_INVALID_CHUNKED_ENCODING）。
 	var sseWriteMu sync.Mutex
+	var ssePublishConversationID string
 	// 用于快速确认模型是否真的产生了流式 delta
 	var responseDeltaCount int
 	var responseStartLogged bool
@@ -1155,7 +1277,24 @@ func (h *AgentHandler) AgentLoopStream(c *gin.Context) {
 			}
 		}
 
-		// 如果客户端已断开，不再发送事件
+		event := StreamEvent{
+			Type:    eventType,
+			Message: message,
+			Data:    data,
+		}
+		eventJSON, errJSON := json.Marshal(event)
+		if errJSON != nil {
+			eventJSON = []byte(`{"type":"error","message":"marshal failed"}`)
+		}
+		sseLine := make([]byte, 0, len(eventJSON)+8)
+		sseLine = append(sseLine, []byte("data: ")...)
+		sseLine = append(sseLine, eventJSON...)
+		sseLine = append(sseLine, '\n', '\n')
+		if ssePublishConversationID != "" && h.taskEventBus != nil {
+			h.taskEventBus.Publish(ssePublishConversationID, sseLine)
+		}
+
+		// 如果客户端已断开，不再写入 HTTP（镜像订阅仍可收到事件）
 		if clientDisconnected {
 			return
 		}
@@ -1168,15 +1307,8 @@ func (h *AgentHandler) AgentLoopStream(c *gin.Context) {
 		default:
 		}
 
-		event := StreamEvent{
-			Type:    eventType,
-			Message: message,
-			Data:    data,
-		}
-		eventJSON, _ := json.Marshal(event)
-
 		sseWriteMu.Lock()
-		_, err := fmt.Fprintf(c.Writer, "data: %s\n\n", eventJSON)
+		_, err := c.Writer.Write(sseLine)
 		if err != nil {
 			sseWriteMu.Unlock()
 			clientDisconnected = true
@@ -1220,6 +1352,7 @@ func (h *AgentHandler) AgentLoopStream(c *gin.Context) {
 			return
 		}
 	}
+	ssePublishConversationID = conversationID
 
 	// 优先尝试从保存的ReAct数据恢复历史上下文
 	agentHistoryMessages, err := h.loadHistoryFromReActData(conversationID)
@@ -1350,14 +1483,14 @@ func (h *AgentHandler) AgentLoopStream(c *gin.Context) {
 	}
 
 	// 创建进度回调函数，复用统一逻辑
-	progressCallback := h.createProgressCallback(conversationID, assistantMessageID, sendEvent)
-
 	// 创建一个独立的上下文用于任务执行，不随HTTP请求取消
 	// 这样即使客户端断开连接（如刷新页面），任务也能继续执行
 	baseCtx, cancelWithCause := context.WithCancelCause(context.Background())
 	taskCtx, timeoutCancel := context.WithTimeout(baseCtx, 600*time.Minute)
 	defer timeoutCancel()
 	defer cancelWithCause(nil)
+	progressCallback := h.createProgressCallback(taskCtx, cancelWithCause, conversationID, assistantMessageID, sendEvent)
+	taskCtx = h.injectReactHITLInterceptor(taskCtx, cancelWithCause, conversationID, assistantMessageID, sendEvent)
 
 	if _, err := h.tasks.StartTask(conversationID, req.Message, cancelWithCause); err != nil {
 		var errorMsg string
@@ -1604,6 +1737,51 @@ func (h *AgentHandler) CancelAgentLoop(c *gin.Context) {
 		"conversationId": req.ConversationID,
 		"message":        "已提交取消请求，任务将在当前步骤完成后停止。",
 	})
+}
+
+// SubscribeAgentTaskEvents GET SSE：订阅指定会话当前运行中任务的事件镜像（帧格式与 POST .../stream 一致），用于刷新页面或断线后接续 UI。
+func (h *AgentHandler) SubscribeAgentTaskEvents(c *gin.Context) {
+	conversationID := strings.TrimSpace(c.Query("conversationId"))
+	if conversationID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "conversationId is required"})
+		return
+	}
+	if h.tasks.GetTask(conversationID) == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "no active task for this conversation"})
+		return
+	}
+	if h.taskEventBus == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "task event bus unavailable"})
+		return
+	}
+
+	c.Header("Content-Type", "text/event-stream")
+	c.Header("Cache-Control", "no-cache")
+	c.Header("Connection", "keep-alive")
+	c.Header("X-Accel-Buffering", "no")
+
+	sub, ch := h.taskEventBus.Subscribe(conversationID)
+	defer h.taskEventBus.Unsubscribe(conversationID, sub)
+
+	flusher, _ := c.Writer.(http.Flusher)
+	ctx := c.Request.Context()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case chunk, ok := <-ch:
+			if !ok {
+				return
+			}
+			if _, err := c.Writer.Write(chunk); err != nil {
+				return
+			}
+			if flusher != nil {
+				flusher.Flush()
+			}
+		}
+	}
 }
 
 // ListAgentTasks 列出所有运行中的任务
@@ -2266,7 +2444,7 @@ func (h *AgentHandler) executeBatchQueue(queueID string) {
 		if assistantMsg != nil {
 			assistantMessageID = assistantMsg.ID
 		}
-		progressCallback := h.createProgressCallback(conversationID, assistantMessageID, nil)
+		progressCallback := h.createProgressCallback(context.Background(), nil, conversationID, assistantMessageID, nil)
 
 		// 执行任务（使用包含角色提示词的finalMessage和角色工具列表）
 		h.logger.Info("执行批量任务", zap.String("queueId", queueID), zap.String("taskId", task.ID), zap.String("message", task.Message), zap.String("role", queue.Role), zap.String("conversationId", conversationID))

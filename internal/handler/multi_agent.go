@@ -53,13 +53,26 @@ func (h *AgentHandler) MultiAgentLoopStream(c *gin.Context) {
 	clientDisconnected := false
 	// 与 sseKeepalive 共用：禁止并发写 ResponseWriter，否则会破坏 chunked 编码（ERR_INVALID_CHUNKED_ENCODING）。
 	var sseWriteMu sync.Mutex
+	var ssePublishConversationID string
 	sendEvent := func(eventType, message string, data interface{}) {
-		if clientDisconnected {
-			return
-		}
 		// 用户主动停止时，Eino 可能仍会并发上报 eventType=="error"。
 		// 为避免 UI 看到“取消错误 + cancelled 文案”两条回复，这里直接丢弃取消对应的 error。
 		if eventType == "error" && baseCtx != nil && errors.Is(context.Cause(baseCtx), ErrTaskCancelled) {
+			return
+		}
+		ev := StreamEvent{Type: eventType, Message: message, Data: data}
+		b, errMarshal := json.Marshal(ev)
+		if errMarshal != nil {
+			b = []byte(`{"type":"error","message":"marshal failed"}`)
+		}
+		sseLine := make([]byte, 0, len(b)+8)
+		sseLine = append(sseLine, []byte("data: ")...)
+		sseLine = append(sseLine, b...)
+		sseLine = append(sseLine, '\n', '\n')
+		if ssePublishConversationID != "" && h.taskEventBus != nil {
+			h.taskEventBus.Publish(ssePublishConversationID, sseLine)
+		}
+		if clientDisconnected {
 			return
 		}
 		select {
@@ -68,10 +81,8 @@ func (h *AgentHandler) MultiAgentLoopStream(c *gin.Context) {
 			return
 		default:
 		}
-		ev := StreamEvent{Type: eventType, Message: message, Data: data}
-		b, _ := json.Marshal(ev)
 		sseWriteMu.Lock()
-		_, err := fmt.Fprintf(c.Writer, "data: %s\n\n", b)
+		_, err := c.Writer.Write(sseLine)
 		if err != nil {
 			sseWriteMu.Unlock()
 			clientDisconnected = true
@@ -95,6 +106,7 @@ func (h *AgentHandler) MultiAgentLoopStream(c *gin.Context) {
 		sendEvent("done", "", nil)
 		return
 	}
+	ssePublishConversationID = prep.ConversationID
 	if prep.CreatedNew {
 		sendEvent("conversation", "会话已创建", map[string]interface{}{
 			"conversationId": prep.ConversationID,
@@ -103,6 +115,10 @@ func (h *AgentHandler) MultiAgentLoopStream(c *gin.Context) {
 
 	conversationID := prep.ConversationID
 	assistantMessageID := prep.AssistantMessageID
+	h.activateHITLForConversation(conversationID, req.Hitl)
+	if h.hitlManager != nil {
+		defer h.hitlManager.DeactivateConversation(conversationID)
+	}
 
 	if prep.UserMessageID != "" {
 		sendEvent("message_saved", "", map[string]interface{}{
@@ -111,12 +127,14 @@ func (h *AgentHandler) MultiAgentLoopStream(c *gin.Context) {
 		})
 	}
 
-	progressCallback := h.createProgressCallback(conversationID, assistantMessageID, sendEvent)
-
 	baseCtx, cancelWithCause := context.WithCancelCause(context.Background())
 	taskCtx, timeoutCancel := context.WithTimeout(baseCtx, 600*time.Minute)
 	defer timeoutCancel()
 	defer cancelWithCause(nil)
+	progressCallback := h.createProgressCallback(taskCtx, cancelWithCause, conversationID, assistantMessageID, sendEvent)
+	taskCtx = multiagent.WithHITLToolInterceptor(taskCtx, func(ctx context.Context, toolName, arguments string) (string, error) {
+		return h.interceptHITLForEinoTool(ctx, cancelWithCause, conversationID, assistantMessageID, sendEvent, toolName, arguments)
+	})
 
 	if _, err := h.tasks.StartTask(conversationID, req.Message, cancelWithCause); err != nil {
 		var errorMsg string
@@ -176,6 +194,23 @@ func (h *AgentHandler) MultiAgentLoopStream(c *gin.Context) {
 			sendEvent("cancelled", cancelMsg, map[string]interface{}{
 				"conversationId": conversationID,
 				"messageId":      assistantMessageID,
+			})
+			sendEvent("done", "", map[string]interface{}{"conversationId": conversationID})
+			return
+		}
+
+		if errors.Is(runErr, context.DeadlineExceeded) || errors.Is(context.Cause(taskCtx), context.DeadlineExceeded) {
+			taskStatus = "timeout"
+			h.tasks.UpdateTaskStatus(conversationID, taskStatus)
+			timeoutMsg := "任务执行超时，已自动终止。"
+			if assistantMessageID != "" {
+				_, _ = h.db.Exec("UPDATE messages SET content = ? WHERE id = ?", timeoutMsg, assistantMessageID)
+				_ = h.db.AddProcessDetail(assistantMessageID, conversationID, "timeout", timeoutMsg, nil)
+			}
+			sendEvent("error", timeoutMsg, map[string]interface{}{
+				"conversationId": conversationID,
+				"messageId":      assistantMessageID,
+				"errorType":      "timeout",
 			})
 			sendEvent("done", "", map[string]interface{}{"conversationId": conversationID})
 			return
@@ -251,9 +286,20 @@ func (h *AgentHandler) MultiAgentLoop(c *gin.Context) {
 		c.JSON(status, gin.H{"error": msg})
 		return
 	}
+	h.activateHITLForConversation(prep.ConversationID, req.Hitl)
+	if h.hitlManager != nil {
+		defer h.hitlManager.DeactivateConversation(prep.ConversationID)
+	}
+
+	baseCtx, cancelWithCause := context.WithCancelCause(c.Request.Context())
+	defer cancelWithCause(nil)
+	progressCallback := h.createProgressCallback(baseCtx, cancelWithCause, prep.ConversationID, prep.AssistantMessageID, nil)
+	baseCtx = multiagent.WithHITLToolInterceptor(baseCtx, func(ctx context.Context, toolName, arguments string) (string, error) {
+		return h.interceptHITLForEinoTool(ctx, cancelWithCause, prep.ConversationID, prep.AssistantMessageID, nil, toolName, arguments)
+	})
 
 	result, runErr := multiagent.RunDeepAgent(
-		c.Request.Context(),
+		baseCtx,
 		h.config,
 		&h.config.MultiAgent,
 		h.agent,
@@ -262,7 +308,7 @@ func (h *AgentHandler) MultiAgentLoop(c *gin.Context) {
 		prep.FinalMessage,
 		prep.History,
 		prep.RoleTools,
-		nil,
+		progressCallback,
 		h.agentsMarkdownDir,
 		strings.TrimSpace(req.Orchestration),
 	)

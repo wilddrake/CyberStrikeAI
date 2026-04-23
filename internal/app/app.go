@@ -326,6 +326,7 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 	registerWebshellTools(mcpServer, db, webshellHandler, log.Logger)
 	registerWebshellManagementTools(mcpServer, db, webshellHandler, log.Logger)
 	configHandler := handler.NewConfigHandler(configPath, cfg, mcpServer, executor, agent, attackChainHandler, externalMCPMgr, log.Logger)
+	agentHandler.SetHitlToolWhitelistSaver(configHandler)
 	externalMCPHandler := handler.NewExternalMCPHandler(externalMCPMgr, cfg, configPath, log.Logger)
 	roleHandler := handler.NewRoleHandler(cfg, configPath, log.Logger)
 	skillsHandler := handler.NewSkillsHandler(cfg, configPath, log.Logger)
@@ -654,9 +655,15 @@ func setupRoutes(
 		// Eino ADK 单代理（ChatModelAgent + Runner；不依赖 multi_agent.enabled）
 		protected.POST("/eino-agent", agentHandler.EinoSingleAgentLoop)
 		protected.POST("/eino-agent/stream", agentHandler.EinoSingleAgentLoopStream)
+		protected.GET("/hitl/pending", agentHandler.ListHITLPending)
+		protected.POST("/hitl/decision", agentHandler.DecideHITLInterrupt)
+		protected.GET("/hitl/config/:conversationId", agentHandler.GetHITLConversationConfig)
+		protected.PUT("/hitl/config", agentHandler.UpsertHITLConversationConfig)
+		protected.POST("/hitl/tool-whitelist", agentHandler.MergeHITLGlobalToolWhitelist)
 		// Agent Loop 取消与任务列表
 		protected.POST("/agent-loop/cancel", agentHandler.CancelAgentLoop)
 		protected.GET("/agent-loop/tasks", agentHandler.ListAgentTasks)
+		protected.GET("/agent-loop/task-events", agentHandler.SubscribeAgentTaskEvents)
 		protected.GET("/agent-loop/tasks/completed", agentHandler.ListCompletedTasks)
 
 		// Eino DeepAgent 多代理（与单 Agent 并存，需 config.multi_agent.enabled）

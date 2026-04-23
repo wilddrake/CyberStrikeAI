@@ -35,11 +35,12 @@ type CompletedTask struct {
 
 // AgentTaskManager 管理正在运行的Agent任务
 type AgentTaskManager struct {
-	mu             sync.RWMutex
-	tasks          map[string]*AgentTask
-	completedTasks []*CompletedTask // 最近完成的任务历史
-	maxHistorySize int              // 最大历史记录数
-	historyRetention time.Duration  // 历史记录保留时间
+	mu               sync.RWMutex
+	tasks            map[string]*AgentTask
+	completedTasks   []*CompletedTask // 最近完成的任务历史
+	maxHistorySize   int              // 最大历史记录数
+	historyRetention time.Duration    // 历史记录保留时间
+	eventBus         *TaskEventBus    // 可选：任务结束时关闭镜像 SSE 订阅
 }
 
 const (
@@ -56,11 +57,25 @@ func NewAgentTaskManager() *AgentTaskManager {
 	m := &AgentTaskManager{
 		tasks:            make(map[string]*AgentTask),
 		completedTasks:   make([]*CompletedTask, 0),
-		maxHistorySize:   50,              // 最多保留50条历史记录
-		historyRetention: 24 * time.Hour,  // 保留24小时
+		maxHistorySize:   50,             // 最多保留50条历史记录
+		historyRetention: 24 * time.Hour, // 保留24小时
 	}
 	go m.runStuckCancellingCleanup()
 	return m
+}
+
+// SetTaskEventBus 设置任务事件总线（与 AgentHandler 共用同一实例）。
+func (m *AgentTaskManager) SetTaskEventBus(b *TaskEventBus) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.eventBus = b
+}
+
+// GetTask 返回运行中任务（无则 nil）。
+func (m *AgentTaskManager) GetTask(conversationID string) *AgentTask {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.tasks[conversationID]
 }
 
 // runStuckCancellingCleanup 定期将长时间处于「取消中」的任务强制结束，避免卡住无法发新消息
@@ -172,10 +187,9 @@ func (m *AgentTaskManager) UpdateTaskStatus(conversationID string, status string
 // FinishTask 完成任务并从管理器中移除
 func (m *AgentTaskManager) FinishTask(conversationID string, finalStatus string) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
-
 	task, exists := m.tasks[conversationID]
 	if !exists {
+		m.mu.Unlock()
 		return
 	}
 
@@ -187,26 +201,31 @@ func (m *AgentTaskManager) FinishTask(conversationID string, finalStatus string)
 	completedTask := &CompletedTask{
 		ConversationID: task.ConversationID,
 		Message:        task.Message,
-		StartedAt:       task.StartedAt,
-		CompletedAt:     time.Now(),
-		Status:          finalStatus,
+		StartedAt:      task.StartedAt,
+		CompletedAt:    time.Now(),
+		Status:         finalStatus,
 	}
-	
+
 	// 添加到历史记录
 	m.completedTasks = append(m.completedTasks, completedTask)
-	
+
 	// 清理过期和过多的历史记录
 	m.cleanupHistory()
 
 	// 从运行任务中移除
 	delete(m.tasks, conversationID)
+	bus := m.eventBus
+	m.mu.Unlock()
+	if bus != nil {
+		bus.CloseConversation(conversationID)
+	}
 }
 
 // cleanupHistory 清理过期的历史记录
 func (m *AgentTaskManager) cleanupHistory() {
 	now := time.Now()
 	cutoffTime := now.Add(-m.historyRetention)
-	
+
 	// 过滤掉过期的记录
 	validTasks := make([]*CompletedTask, 0, len(m.completedTasks))
 	for _, task := range m.completedTasks {
@@ -214,7 +233,7 @@ func (m *AgentTaskManager) cleanupHistory() {
 			validTasks = append(validTasks, task)
 		}
 	}
-	
+
 	// 如果仍然超过最大数量，只保留最新的
 	if len(validTasks) > m.maxHistorySize {
 		// 按完成时间排序，保留最新的
@@ -222,7 +241,7 @@ func (m *AgentTaskManager) cleanupHistory() {
 		start := len(validTasks) - m.maxHistorySize
 		validTasks = validTasks[start:]
 	}
-	
+
 	m.completedTasks = validTasks
 }
 
@@ -247,30 +266,30 @@ func (m *AgentTaskManager) GetActiveTasks() []*AgentTask {
 func (m *AgentTaskManager) GetCompletedTasks() []*CompletedTask {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	
+
 	// 清理过期记录（只读锁，不影响其他操作）
 	// 注意：这里不能直接调用cleanupHistory，因为需要写锁
 	// 所以返回时过滤过期记录
 	now := time.Now()
 	cutoffTime := now.Add(-m.historyRetention)
-	
+
 	result := make([]*CompletedTask, 0, len(m.completedTasks))
 	for _, task := range m.completedTasks {
 		if task.CompletedAt.After(cutoffTime) {
 			result = append(result, task)
 		}
 	}
-	
+
 	// 按完成时间倒序排序（最新的在前）
 	// 由于是追加的，最新的在最后，需要反转
 	for i, j := 0, len(result)-1; i < j; i, j = i+1, j-1 {
 		result[i], result[j] = result[j], result[i]
 	}
-	
+
 	// 限制返回数量
 	if len(result) > m.maxHistorySize {
 		result = result[:m.maxHistorySize]
 	}
-	
+
 	return result
 }

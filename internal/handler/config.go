@@ -187,6 +187,7 @@ type GetConfigResponse struct {
 	MCP        config.MCPConfig        `json:"mcp"`
 	Tools      []ToolConfigInfo        `json:"tools"`
 	Agent      config.AgentConfig      `json:"agent"`
+	Hitl       config.HitlConfig       `json:"hitl,omitempty"`
 	Knowledge  config.KnowledgeConfig  `json:"knowledge"`
 	Robots     config.RobotsConfig     `json:"robots,omitempty"`
 	MultiAgent config.MultiAgentPublic `json:"multi_agent,omitempty"`
@@ -282,6 +283,7 @@ func (h *ConfigHandler) GetConfig(c *gin.Context) {
 		MCP:        h.config.MCP,
 		Tools:      tools,
 		Agent:      h.config.Agent,
+		Hitl:       h.config.Hitl,
 		Knowledge:  h.config.Knowledge,
 		Robots:     h.config.Robots,
 		MultiAgent: multiPub,
@@ -1132,6 +1134,7 @@ func (h *ConfigHandler) saveConfig() error {
 	updateFOFAConfig(root, h.config.FOFA)
 	updateKnowledgeConfig(root, h.config.Knowledge)
 	updateRobotsConfig(root, h.config.Robots)
+	updateHitlConfig(root, h.config.Hitl)
 	updateMultiAgentConfig(root, h.config.MultiAgent)
 	// 更新外部MCP配置（使用external_mcp.go中的函数，同一包中可直接调用）
 	updateExternalMCPConfig(root, h.config.ExternalMCP)
@@ -1308,6 +1311,47 @@ func updateKnowledgeConfig(doc *yaml.Node, cfg config.KnowledgeConfig) {
 	setIntInMap(indexingNode, "retry_delay_ms", cfg.Indexing.RetryDelayMs)
 }
 
+func mergeHitlToolWhitelistSlice(existing, add []string) []string {
+	seen := make(map[string]struct{})
+	out := make([]string, 0, len(existing)+len(add))
+	for _, list := range [][]string{existing, add} {
+		for _, t := range list {
+			n := strings.ToLower(strings.TrimSpace(t))
+			if n == "" {
+				continue
+			}
+			if _, ok := seen[n]; ok {
+				continue
+			}
+			seen[n] = struct{}{}
+			out = append(out, strings.TrimSpace(t))
+		}
+	}
+	return out
+}
+
+// MergeHitlToolWhitelistIntoConfig 将会话侧栏提交的免审批工具名合并进内存配置并写入 config.yaml（与全局白名单去重规则一致：小写键、保留首次出现的原始大小写）。
+func (h *ConfigHandler) MergeHitlToolWhitelistIntoConfig(add []string) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	merged := mergeHitlToolWhitelistSlice(h.config.Hitl.ToolWhitelist, add)
+	h.config.Hitl.ToolWhitelist = merged
+	if err := h.saveConfig(); err != nil {
+		return err
+	}
+	h.logger.Info("HITL 全局工具白名单已合并写入配置文件",
+		zap.Int("count", len(merged)),
+	)
+	return nil
+}
+
+func updateHitlConfig(doc *yaml.Node, cfg config.HitlConfig) {
+	root := doc.Content[0]
+	hitlNode := ensureMap(root, "hitl")
+	// flow 样式 [a, b, c] 单行展示，工具多时比块序列省行数
+	setFlowStringSliceInMap(hitlNode, "tool_whitelist", cfg.ToolWhitelist)
+}
+
 func updateRobotsConfig(doc *yaml.Node, cfg config.RobotsConfig) {
 	root := doc.Content[0]
 	robotsNode := ensureMap(root, "robots")
@@ -1408,6 +1452,21 @@ func setStringSliceInMap(mapNode *yaml.Node, key string, values []string) {
 	valueNode.Kind = yaml.SequenceNode
 	valueNode.Tag = "!!seq"
 	valueNode.Style = 0
+	valueNode.Content = nil
+	for _, v := range values {
+		valueNode.Content = append(valueNode.Content, &yaml.Node{
+			Kind:  yaml.ScalarNode,
+			Tag:   "!!str",
+			Value: v,
+		})
+	}
+}
+
+func setFlowStringSliceInMap(mapNode *yaml.Node, key string, values []string) {
+	_, valueNode := ensureKeyValue(mapNode, key)
+	valueNode.Kind = yaml.SequenceNode
+	valueNode.Tag = "!!seq"
+	valueNode.Style = yaml.FlowStyle
 	valueNode.Content = nil
 	for _, v := range values {
 		valueNode.Content = append(valueNode.Content, &yaml.Node{

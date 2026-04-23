@@ -53,6 +53,37 @@ type ResultStorage interface {
 	DeleteResult(executionID string) error
 }
 
+type toolCallInterceptorCtxKey struct{}
+
+type agentConversationIDKey struct{}
+
+func withAgentConversationID(ctx context.Context, id string) context.Context {
+	id = strings.TrimSpace(id)
+	if id == "" || ctx == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, agentConversationIDKey{}, id)
+}
+
+func agentConversationIDFromContext(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	v, _ := ctx.Value(agentConversationIDKey{}).(string)
+	return v
+}
+
+// ToolCallInterceptor allows caller to gate or rewrite tool arguments just before execution.
+// Returning a non-nil error means the tool call is rejected and execution is skipped.
+type ToolCallInterceptor func(ctx context.Context, toolName string, args map[string]interface{}, toolCallID string) (map[string]interface{}, error)
+
+func WithToolCallInterceptor(ctx context.Context, fn ToolCallInterceptor) context.Context {
+	if fn == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, toolCallInterceptorCtxKey{}, fn)
+}
+
 // NewAgent 创建新的Agent
 func NewAgent(cfg *config.OpenAIConfig, agentCfg *config.AgentConfig, mcpServer *mcp.Server, externalMCPMgr *mcp.ExternalMCPManager, logger *zap.Logger, maxIterations int) *Agent {
 	// 如果 maxIterations 为 0 或负数，使用默认值 30
@@ -348,7 +379,8 @@ func (a *Agent) EinoSingleAgentSystemInstruction() string {
 
 // AgentLoopWithProgress 执行Agent循环（带进度回调和对话ID）
 func (a *Agent) AgentLoopWithProgress(ctx context.Context, userInput string, historyMessages []ChatMessage, conversationID string, callback ProgressCallback, roleTools []string) (*AgentLoopResult, error) {
-	// 设置当前对话ID
+	ctx = withAgentConversationID(ctx, conversationID)
+	// 设置当前对话ID（兼容未走 context 的旧路径；并发会话应以 context 为准）
 	a.mu.Lock()
 	a.currentConversationID = conversationID
 	a.mu.Unlock()
@@ -653,22 +685,49 @@ func (a *Agent) AgentLoopWithProgress(ctx context.Context, userInput string, his
 					"iteration":    i + 1,
 				})
 
+				execArgs := toolCall.Function.Arguments
+				if interceptor, ok := ctx.Value(toolCallInterceptorCtxKey{}).(ToolCallInterceptor); ok && interceptor != nil {
+					newArgs, interceptErr := interceptor(ctx, toolCall.Function.Name, execArgs, toolCall.ID)
+					if interceptErr != nil {
+						errorMsg := fmt.Sprintf("工具调用被人工拒绝: %v", interceptErr)
+						messages = append(messages, ChatMessage{
+							Role:       "tool",
+							ToolCallID: toolCall.ID,
+							Content:    errorMsg,
+						})
+						sendProgress("tool_result", fmt.Sprintf("工具 %s 执行失败", toolCall.Function.Name), map[string]interface{}{
+							"toolName":   toolCall.Function.Name,
+							"success":    false,
+							"isError":    true,
+							"error":      errorMsg,
+							"toolCallId": toolCall.ID,
+							"index":      idx + 1,
+							"total":      len(choice.Message.ToolCalls),
+							"iteration":  i + 1,
+						})
+						continue
+					}
+					if newArgs != nil {
+						execArgs = newArgs
+					}
+				}
+
 				// 执行工具
 				toolCtx := context.WithValue(ctx, security.ToolOutputCallbackCtxKey, security.ToolOutputCallback(func(chunk string) {
 					if strings.TrimSpace(chunk) == "" {
 						return
 					}
 					sendProgress("tool_result_delta", chunk, map[string]interface{}{
-						"toolName":    toolCall.Function.Name,
-						"toolCallId":  toolCall.ID,
-						"index":       idx + 1,
-						"total":       len(choice.Message.ToolCalls),
-						"iteration":   i + 1,
+						"toolName":   toolCall.Function.Name,
+						"toolCallId": toolCall.ID,
+						"index":      idx + 1,
+						"total":      len(choice.Message.ToolCalls),
+						"iteration":  i + 1,
 						// success 在最终 tool_result 事件里会以 success/isError 标记为准
 					})
 				}))
 
-				execResult, err := a.executeToolViaMCP(toolCtx, toolCall.Function.Name, toolCall.Function.Arguments)
+				execResult, err := a.executeToolViaMCP(toolCtx, toolCall.Function.Name, execArgs)
 				if err != nil {
 					// 构建详细的错误信息，帮助AI理解问题并做出决策
 					errorMsg := a.formatToolError(toolCall.Function.Name, toolCall.Function.Arguments, err)
@@ -746,7 +805,7 @@ func (a *Agent) AgentLoopWithProgress(ctx context.Context, userInput string, his
 				// 流式调用OpenAI获取总结（不提供工具，强制AI直接回复）
 				sendProgress("response_start", "", map[string]interface{}{
 					"conversationId":     conversationID,
-					"mcpExecutionIds":   result.MCPExecutionIDs,
+					"mcpExecutionIds":    result.MCPExecutionIDs,
 					"messageGeneratedBy": "summary",
 				})
 				streamText, _ := a.callOpenAIStreamText(ctx, messages, []Tool{}, func(delta string) error {
@@ -793,7 +852,7 @@ func (a *Agent) AgentLoopWithProgress(ctx context.Context, userInput string, his
 			// 流式调用OpenAI获取总结（不提供工具，强制AI直接回复）
 			sendProgress("response_start", "", map[string]interface{}{
 				"conversationId":     conversationID,
-				"mcpExecutionIds":   result.MCPExecutionIDs,
+				"mcpExecutionIds":    result.MCPExecutionIDs,
 				"messageGeneratedBy": "summary",
 			})
 			streamText, _ := a.callOpenAIStreamText(ctx, messages, []Tool{}, func(delta string) error {
@@ -840,7 +899,7 @@ func (a *Agent) AgentLoopWithProgress(ctx context.Context, userInput string, his
 	// 流式调用OpenAI获取总结（不提供工具，强制AI直接回复）
 	sendProgress("response_start", "", map[string]interface{}{
 		"conversationId":     conversationID,
-		"mcpExecutionIds":   result.MCPExecutionIDs,
+		"mcpExecutionIds":    result.MCPExecutionIDs,
 		"messageGeneratedBy": "max_iter_summary",
 	})
 	streamText, _ := a.callOpenAIStreamText(ctx, messages, []Tool{}, func(delta string) error {
@@ -913,16 +972,12 @@ func (a *Agent) getAvailableTools(roleTools []string) []Tool {
 		defer cancel()
 
 		externalTools, err := a.externalMCPMgr.GetAllTools(ctx)
+		extMap := make(map[string]string)
 		if err != nil {
 			a.logger.Warn("获取外部MCP工具失败", zap.Error(err))
 		} else {
 			// 获取外部MCP配置，用于检查工具启用状态
 			externalMCPConfigs := a.externalMCPMgr.GetConfigs()
-
-			// 清空并重建工具名称映射
-			a.mu.Lock()
-			a.toolNameMapping = make(map[string]string)
-			a.mu.Unlock()
 
 			// 将外部MCP工具添加到工具列表（只添加启用的工具）
 			for _, externalTool := range externalTools {
@@ -983,9 +1038,7 @@ func (a *Agent) getAvailableTools(roleTools []string) []Tool {
 				openAIName := strings.ReplaceAll(externalTool.Name, "::", "__")
 
 				// 保存名称映射关系（OpenAI格式 -> 原始格式）
-				a.mu.Lock()
-				a.toolNameMapping[openAIName] = externalTool.Name
-				a.mu.Unlock()
+				extMap[openAIName] = externalTool.Name
 
 				tools = append(tools, Tool{
 					Type: "function",
@@ -997,6 +1050,9 @@ func (a *Agent) getAvailableTools(roleTools []string) []Tool {
 				})
 			}
 		}
+		a.mu.Lock()
+		a.toolNameMapping = extMap
+		a.mu.Unlock()
 	}
 
 	a.logger.Debug("获取可用工具列表",
@@ -1390,9 +1446,12 @@ func (a *Agent) executeToolViaMCP(ctx context.Context, toolName string, args map
 
 	// 如果是record_vulnerability工具，自动添加conversation_id
 	if toolName == builtin.ToolRecordVulnerability {
-		a.mu.RLock()
-		conversationID := a.currentConversationID
-		a.mu.RUnlock()
+		conversationID := agentConversationIDFromContext(ctx)
+		if conversationID == "" {
+			a.mu.RLock()
+			conversationID = a.currentConversationID
+			a.mu.RUnlock()
+		}
 
 		if conversationID != "" {
 			args["conversation_id"] = conversationID

@@ -41,11 +41,24 @@ func (h *AgentHandler) EinoSingleAgentLoopStream(c *gin.Context) {
 	var baseCtx context.Context
 	clientDisconnected := false
 	var sseWriteMu sync.Mutex
+	var ssePublishConversationID string
 	sendEvent := func(eventType, message string, data interface{}) {
-		if clientDisconnected {
+		if eventType == "error" && baseCtx != nil && errors.Is(context.Cause(baseCtx), ErrTaskCancelled) {
 			return
 		}
-		if eventType == "error" && baseCtx != nil && errors.Is(context.Cause(baseCtx), ErrTaskCancelled) {
+		ev := StreamEvent{Type: eventType, Message: message, Data: data}
+		b, errMarshal := json.Marshal(ev)
+		if errMarshal != nil {
+			b = []byte(`{"type":"error","message":"marshal failed"}`)
+		}
+		sseLine := make([]byte, 0, len(b)+8)
+		sseLine = append(sseLine, []byte("data: ")...)
+		sseLine = append(sseLine, b...)
+		sseLine = append(sseLine, '\n', '\n')
+		if ssePublishConversationID != "" && h.taskEventBus != nil {
+			h.taskEventBus.Publish(ssePublishConversationID, sseLine)
+		}
+		if clientDisconnected {
 			return
 		}
 		select {
@@ -54,10 +67,8 @@ func (h *AgentHandler) EinoSingleAgentLoopStream(c *gin.Context) {
 			return
 		default:
 		}
-		ev := StreamEvent{Type: eventType, Message: message, Data: data}
-		b, _ := json.Marshal(ev)
 		sseWriteMu.Lock()
-		_, err := fmt.Fprintf(c.Writer, "data: %s\n\n", b)
+		_, err := c.Writer.Write(sseLine)
 		if err != nil {
 			sseWriteMu.Unlock()
 			clientDisconnected = true
@@ -81,6 +92,7 @@ func (h *AgentHandler) EinoSingleAgentLoopStream(c *gin.Context) {
 		sendEvent("done", "", nil)
 		return
 	}
+	ssePublishConversationID = prep.ConversationID
 	if prep.CreatedNew {
 		sendEvent("conversation", "会话已创建", map[string]interface{}{
 			"conversationId": prep.ConversationID,
@@ -89,6 +101,10 @@ func (h *AgentHandler) EinoSingleAgentLoopStream(c *gin.Context) {
 
 	conversationID := prep.ConversationID
 	assistantMessageID := prep.AssistantMessageID
+	h.activateHITLForConversation(conversationID, req.Hitl)
+	if h.hitlManager != nil {
+		defer h.hitlManager.DeactivateConversation(conversationID)
+	}
 
 	if prep.UserMessageID != "" {
 		sendEvent("message_saved", "", map[string]interface{}{
@@ -97,13 +113,15 @@ func (h *AgentHandler) EinoSingleAgentLoopStream(c *gin.Context) {
 		})
 	}
 
-	progressCallback := h.createProgressCallback(conversationID, assistantMessageID, sendEvent)
-
 	var cancelWithCause context.CancelCauseFunc
 	baseCtx, cancelWithCause = context.WithCancelCause(context.Background())
 	taskCtx, timeoutCancel := context.WithTimeout(baseCtx, 600*time.Minute)
 	defer timeoutCancel()
 	defer cancelWithCause(nil)
+	progressCallback := h.createProgressCallback(taskCtx, cancelWithCause, conversationID, assistantMessageID, sendEvent)
+	taskCtx = multiagent.WithHITLToolInterceptor(taskCtx, func(ctx context.Context, toolName, arguments string) (string, error) {
+		return h.interceptHITLForEinoTool(ctx, cancelWithCause, conversationID, assistantMessageID, sendEvent, toolName, arguments)
+	})
 
 	if _, err := h.tasks.StartTask(conversationID, req.Message, cancelWithCause); err != nil {
 		var errorMsg string
@@ -136,6 +154,8 @@ func (h *AgentHandler) EinoSingleAgentLoopStream(c *gin.Context) {
 	defer close(stopKeepalive)
 
 	if h.config == nil {
+		taskStatus = "failed"
+		h.tasks.UpdateTaskStatus(conversationID, taskStatus)
 		sendEvent("error", "服务器配置未加载", nil)
 		sendEvent("done", "", map[string]interface{}{"conversationId": conversationID})
 		return
@@ -166,7 +186,24 @@ func (h *AgentHandler) EinoSingleAgentLoopStream(c *gin.Context) {
 			}
 			sendEvent("cancelled", cancelMsg, map[string]interface{}{
 				"conversationId": conversationID,
-				"messageId":        assistantMessageID,
+				"messageId":      assistantMessageID,
+			})
+			sendEvent("done", "", map[string]interface{}{"conversationId": conversationID})
+			return
+		}
+
+		if errors.Is(runErr, context.DeadlineExceeded) || errors.Is(context.Cause(taskCtx), context.DeadlineExceeded) {
+			taskStatus = "timeout"
+			h.tasks.UpdateTaskStatus(conversationID, taskStatus)
+			timeoutMsg := "任务执行超时，已自动终止。"
+			if assistantMessageID != "" {
+				_, _ = h.db.Exec("UPDATE messages SET content = ? WHERE id = ?", timeoutMsg, assistantMessageID)
+				_ = h.db.AddProcessDetail(assistantMessageID, conversationID, "timeout", timeoutMsg, nil)
+			}
+			sendEvent("error", timeoutMsg, map[string]interface{}{
+				"conversationId": conversationID,
+				"messageId":      assistantMessageID,
+				"errorType":      "timeout",
 			})
 			sendEvent("done", "", map[string]interface{}{"conversationId": conversationID})
 			return
@@ -232,12 +269,22 @@ func (h *AgentHandler) EinoSingleAgentLoop(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	h.activateHITLForConversation(prep.ConversationID, req.Hitl)
+	if h.hitlManager != nil {
+		defer h.hitlManager.DeactivateConversation(prep.ConversationID)
+	}
 
 	var progressBuf strings.Builder
-	progressCallback := func(eventType, message string, data interface{}) {
+	progressCallbackRaw := func(eventType, message string, data interface{}) {
 		progressBuf.WriteString(eventType)
 		progressBuf.WriteByte('\n')
 	}
+	baseCtx, cancelWithCause := context.WithCancelCause(c.Request.Context())
+	defer cancelWithCause(nil)
+	progressCallback := h.createProgressCallback(baseCtx, cancelWithCause, prep.ConversationID, prep.AssistantMessageID, progressCallbackRaw)
+	baseCtx = multiagent.WithHITLToolInterceptor(baseCtx, func(ctx context.Context, toolName, arguments string) (string, error) {
+		return h.interceptHITLForEinoTool(ctx, cancelWithCause, prep.ConversationID, prep.AssistantMessageID, nil, toolName, arguments)
+	})
 
 	if h.config == nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器配置未加载"})
@@ -245,7 +292,7 @@ func (h *AgentHandler) EinoSingleAgentLoop(c *gin.Context) {
 	}
 
 	result, runErr := multiagent.RunEinoSingleChatModelAgent(
-		c.Request.Context(),
+		baseCtx,
 		h.config,
 		&h.config.MultiAgent,
 		h.agent,
@@ -279,10 +326,10 @@ func (h *AgentHandler) EinoSingleAgentLoop(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"response":         result.Response,
-		"conversationId":   prep.ConversationID,
-		"mcpExecutionIds":  result.MCPExecutionIDs,
+		"response":           result.Response,
+		"conversationId":     prep.ConversationID,
+		"mcpExecutionIds":    result.MCPExecutionIDs,
 		"assistantMessageId": prep.AssistantMessageID,
-		"agentMode":        "eino_single",
+		"agentMode":          "eino_single",
 	})
 }
